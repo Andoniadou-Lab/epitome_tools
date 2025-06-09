@@ -1,0 +1,32 @@
+models/
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.class
+
+# C extensions
+*.so
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# PyInstaller
+*.spec
+
+# VS Code settings
+.vscode/
+
+# macOS hidden files
+.DS_Store
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Git LFS files
+.gitattributes
