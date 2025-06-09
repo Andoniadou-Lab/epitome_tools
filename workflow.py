@@ -1,0 +1,167 @@
+import numpy as np
+import scipy.sparse as sp
+import joblib
+from pathlib import Path
+import xgboost as xgb
+from .celltyping import load_celltype_model, prepare_matrix_celltype, perform_celltype_prediction
+from .doublets import load_doublet_model, prepare_matrix_doublet, perform_doublet_prediction
+
+def check_sample_compatibility_features(adata, feature_names, return_present=True,
+                                        return_missing=True):
+    varnames = adata.var_names
+
+    #check percentage of features that are present in the adata object
+    present = np.isin(feature_names, varnames)
+    present_percentage = np.sum(present) / len(feature_names) * 100
+    print(f"Percentage of features present in adata: {present_percentage:.2f}%")
+    if return_present:
+        present_features = feature_names[present]
+        print(f"Number of features present in adata: {len(present_features)}")
+    else:
+        present_features = None
+    if return_missing:
+        missing_features = feature_names[~present]
+        print(f"Number of features missing in adata: {len(missing_features)}")
+    else:
+        missing_features = None
+
+    #pass if at least 70% of the features are present
+    if present_percentage < 70:
+        print("Warning: Less than 70% of the features are present in the adata object.")
+        passing = False
+    else:
+        print("At least 70% of the features are present in the adata object.")
+        passing = True
+
+    
+    if return_present and return_missing:
+        return passing, present_features, missing_features
+    
+    elif return_present:
+        return passing, present_features
+    elif return_missing:
+        return passing, missing_features
+    else:
+        return passing
+    
+
+def check_sample_compatibility_normalization(adata, force=False):
+    # Check if the model is for RNA or ATAC
+    #check number of cells, if more than 50000, throw an error
+    if adata.shape[0] > 50000:
+        print(f"Error: The number of cells in the dataset is greater than 50000. Are you sure this has been filtered correctly?")
+    
+    #take info from first 10 cells
+    first_10_cells = adata[:10, :].X
+    #check if they have integer values or if 1.0 occurs more than 10% of the time
+    integer_type = np.issubdtype(first_10_cells.dtype, np.integer)
+    if integer_type:
+        print(f"Warning: The dataset appears to be in integer format. Are you sure this has been normalized correctly?")
+    
+    one_values = np.sum(first_10_cells == 1.0) / first_10_cells.size
+    if one_values > 0.1:
+        print(f"Warning: The dataset has more than 10% of the values equal to 1.0. Are you sure this has been normalized correctly?")
+
+    #if cells sum to nearly 10k, say it hasnt been logged
+    not_logged = False
+    if np.all(np.sum(first_10_cells, axis=1) > 9000) and np.all(np.sum(first_10_cells, axis=1) < 11000):
+        print(f"Warning: Have you logged the dataset? The cells sum to nearly 10k.")
+        not_logged = True
+    
+
+    #if force is True, return True
+    passing = False
+    if force:
+        print(f"Warning: Force is set to True. Passing the dataset compatibility check.")
+        passing = True
+    elif not integer_type and one_values < 0.1 and not not_logged:
+        print(f"The dataset has passed the compatibility check.")
+        passing = True
+
+    return passing
+
+
+def get_base_path():
+    """Get the absolute path to the project root directory."""
+    # Check for environment variable first
+    return Path(__file__).parent
+
+
+def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True):
+    """
+    Main workflow for cell type prediction.
+    """
+
+    base_path = get_base_path()
+    if modality == "rna":
+        model_path = f"{base_path}/models/rna_model_full_data_fixed_params_weighted_0526.json"
+        label_encoder_path = f'{base_path}/models/label_encoder_full_data_fixed_params_weighted_0430.pkl'
+
+    elif modality == "atac":
+        model_path = f"/{base_path}/models/atac_model_full_data_fixed_params_weighted_0526.json"
+        label_encoder_path = f'{base_path}/models/label_encoder_atac_full_data_fixed_params_weighted_0430.pkl'
+
+
+    model, label_encoder, feature_names = load_celltype_model(model_path, label_encoder_path)
+
+    #checks
+    check_sample_compatibility_features(adata, feature_names, return_present=False, return_missing=False)
+    check_sample_compatibility_normalization(adata, force=False)
+
+    # Prepare the matrix for cell type prediction
+    X_final = prepare_matrix_celltype(adata, feature_names, active_assay=active_assay)
+    # Perform cell type prediction
+    predicted_cell_types, probas = perform_celltype_prediction(X_final, model, label_encoder)
+    # Add predictions to adata
+    if in_place:
+        adata.obs['predicted_cell_type'] = predicted_cell_types
+        adata.obs['predicted_cell_type_proba'] = probas.max(axis=1)  # Store max probability
+        return adata
+    else:
+        return predicted_cell_types
+
+
+def doublet_workflow(adata,modality,in_place=True):
+
+    base_path = get_base_path()
+
+
+    if modality == "rna":
+        model_path = f"{base_path}/models/rna_model_binary_full_data_fixed_params_weighted_0515.json"
+        label_encoder_path = f'{base_path}/models/label_encoder_binary_full_data_fixed_params_weighted_0515.pkl'
+        threshold_path = f'{base_path}/models/final_threshold_0515.pkl'
+
+    elif modality == "atac":
+        model_path = f"{base_path}/models/atac_model_binary_full_data_fixed_params_weighted_0515.json"
+        label_encoder_path = f'{base_path}/models/label_encoder_binary_atac_full_data_fixed_params_weighted_0515.pkl'
+        threshold_path = f'{base_path}/models/final_threshold_atac_0515.pkl'
+
+    model, label_encoder, threshold, feature_names = load_doublet_model(model_path, label_encoder_path, threshold_path)
+
+
+    #checks
+    check_sample_compatibility_features(adata, feature_names, return_present=False, return_missing=False)
+    check_sample_compatibility_normalization(adata, force=False)
+
+
+    # Prepare the matrix for doublet prediction
+    X_final = prepare_matrix_doublet(adata, feature_names)
+    # Perform doublet prediction
+    predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold)
+    # Add predictions to adata
+    if in_place:
+        adata.obs['predicted_doublet'] = predicted_doublet_labels
+        adata.obs['is_doublet'] = is_doublet
+        adata.obs['doublet_score'] = doublet_score
+        return adata
+    else:
+        return predicted_doublet_labels
+    
+
+def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True):
+    """
+    Main workflow for cell type and doublet prediction.
+    """
+    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place)
+    adata = doublet_workflow(adata, modality=modality, in_place=in_place)
+    return adata
