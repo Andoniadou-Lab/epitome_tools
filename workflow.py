@@ -92,6 +92,7 @@ def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True):
     Main workflow for cell type prediction.
     """
 
+
     base_path = get_base_path()
     if modality == "rna":
         model_path = f"{base_path}/models/rna_model_full_data_fixed_params_weighted_0526.json"
