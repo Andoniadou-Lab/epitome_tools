@@ -3,7 +3,7 @@ import scipy.sparse as sp
 import joblib
 from pathlib import Path
 import xgboost as xgb
-from .celltyping import load_celltype_model, prepare_matrix_celltype, perform_celltype_prediction
+from .celltyping import load_celltype_model, prepare_matrix_celltype, perform_celltype_prediction,smoothing_cell_types
 from .doublets import load_doublet_model, prepare_matrix_doublet, perform_doublet_prediction
 
 def check_sample_compatibility_features(adata, feature_names, return_present=True,
@@ -52,23 +52,29 @@ def check_sample_compatibility_normalization(adata, force=False):
         print(f"Error: The number of cells in the dataset is greater than 50000. Are you sure this has been filtered correctly?")
     
     #take info from first 10 cells
-    first_10_cells = adata[:10, :].X
+    first_20_cells = adata[:20, :].X
     #check if they have integer values or if 1.0 occurs more than 10% of the time
-    integer_type = np.issubdtype(first_10_cells.dtype, np.integer)
+    integer_type = np.issubdtype(first_20_cells.dtype, np.integer)
     if integer_type:
         print(f"Warning: The dataset appears to be in integer format. Are you sure this has been normalized correctly?")
     
-    one_values = np.sum(first_10_cells == 1.0) / first_10_cells.size
-    if one_values > 0.1:
-        print(f"Warning: The dataset has more than 10% of the values equal to 1.0. Are you sure this has been normalized correctly?")
+    not_normed = False
+    one_values = np.sum(first_20_cells == 1.0) / first_20_cells.size
+    if one_values > 0.05:
+        not_normed = True
+        print(f"Warning: The dataset has more than 5% of the values equal to 1.0. Are you sure this has been normalized correctly?")
 
-    #if cells sum to nearly 10k, say it hasnt been logged
+    one_values = np.sum(first_20_cells == 1) / first_20_cells.size
+    if one_values > 0.05:
+        not_normed = True
+        print(f"Warning: The dataset has more than 5% of the values equal to 1.0. Are you sure this has been normalized correctly?")
+
+    #if all cells sum to nearly 10k, say it hasnt been logged
     not_logged = False
-    if np.all(np.sum(first_10_cells, axis=1) > 9000) and np.all(np.sum(first_10_cells, axis=1) < 11000):
+    if np.all(np.sum(first_20_cells, axis=1) > 9500) and np.all(np.sum(first_20_cells, axis=1) < 10500):
         print(f"Warning: Have you logged the dataset? The cells sum to nearly 10k.")
         not_logged = True
     
-
     #if force is True, return True
     passing = False
     if force:
@@ -78,7 +84,7 @@ def check_sample_compatibility_normalization(adata, force=False):
         print(f"The dataset has passed the compatibility check.")
         passing = True
 
-    return passing
+    return passing, not_normed, not_logged
 
 
 def get_base_path():
@@ -87,11 +93,10 @@ def get_base_path():
     return Path(__file__).parent
 
 
-def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True):
+def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan',smoothing=True):
     """
     Main workflow for cell type prediction.
     """
-
 
     base_path = get_base_path()
     if modality == "rna":
@@ -110,19 +115,21 @@ def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True):
     check_sample_compatibility_normalization(adata, force=False)
 
     # Prepare the matrix for cell type prediction
-    X_final = prepare_matrix_celltype(adata, feature_names, active_assay=active_assay)
+    X_final = prepare_matrix_celltype(adata, feature_names, active_assay=active_assay, nan_or_zero=nan_or_zero)
     # Perform cell type prediction
     predicted_cell_types, probas = perform_celltype_prediction(X_final, model, label_encoder)
     # Add predictions to adata
     if in_place:
         adata.obs['predicted_cell_type'] = predicted_cell_types
         adata.obs['predicted_cell_type_proba'] = probas.max(axis=1)  # Store max probability
+        if smoothing:
+            adata = smoothing_cell_types(adata)
         return adata
     else:
         return predicted_cell_types
 
 
-def doublet_workflow(adata,modality,in_place=True):
+def doublet_workflow(adata,modality,in_place=True, nan_or_zero='nan'):
 
     base_path = get_base_path()
 
@@ -148,7 +155,7 @@ def doublet_workflow(adata,modality,in_place=True):
     # Prepare the matrix for doublet prediction
     X_final = prepare_matrix_doublet(adata, feature_names)
     # Perform doublet prediction
-    predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold)
+    predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold, nan_or_zero=nan_or_zero)
     # Add predictions to adata
     if in_place:
         adata.obs['predicted_doublet'] = predicted_doublet_labels
@@ -159,10 +166,10 @@ def doublet_workflow(adata,modality,in_place=True):
         return predicted_doublet_labels
     
 
-def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True):
+def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True, nan_or_zero='nan', smoothing=True):
     """
     Main workflow for cell type and doublet prediction.
     """
-    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place)
-    adata = doublet_workflow(adata, modality=modality, in_place=in_place)
+    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing)
+    adata = doublet_workflow(adata, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero)
     return adata

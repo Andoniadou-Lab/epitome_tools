@@ -3,7 +3,9 @@ import joblib
 from pathlib import Path
 import scipy.sparse as sp
 import numpy as np
-
+import scanpy as sc
+import pandas as pd
+from collections import Counter
 
 def load_celltype_model(model_path,label_encoder_path):
     """
@@ -24,8 +26,7 @@ def load_celltype_model(model_path,label_encoder_path):
 
 
 
-
-def prepare_matrix_celltype(adata, feature_names,active_assay="sc"):
+def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero='nan'):
     """
     Prepare the AnnData object for prediction by selecting the relevant features.
     """
@@ -76,7 +77,10 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc"):
     print(f"Combined matrix shape for model 1: {combined_X1.shape}")
 
     # Initialize the final matrix with NaNs (XGBoost can handle NaNs)
-    X_final1 = np.full((n_obs, len(feature_names)), np.nan, dtype=np.float32)
+    if nan_or_zero == 'nan':
+        X_final1 = np.full((n_obs, len(feature_names)), np.nan, dtype=np.float32)
+    elif nan_or_zero == 'zero':
+        X_final1 = np.zeros((n_obs, len(feature_names)), dtype=np.float32)
 
     # Create a mapping for the target feature order
     target_feature_indices1 = {name: i for i, name in enumerate(feature_names)}
@@ -122,3 +126,33 @@ def perform_celltype_prediction(matrix, model, label_encoder, return_probas=True
         return predicted_cell_types, probas
     else:
         return predicted_cell_types
+    
+
+def smoothing_cell_types(adata):
+    """
+    Checks for PCA embedding, generates if missing, finds 10 closest neighbors,
+    and reassigns cell identity based on neighbor majority.
+    """
+    if 'X_pca' not in adata.obsm:
+        sc.tl.pca(adata)
+
+    sc.pp.neighbors(adata, n_neighbors=10, use_rep='X_pca')
+
+    new_cell_types = adata.obs['predicted_cell_type'].copy()
+
+    for i in range(adata.n_obs):
+        # Access neighbor indices from the connectivities matrix in adata.obsp
+        neighbor_indices = adata.obsp['connectivities'].indices[
+            adata.obsp['connectivities'].indptr[i]:
+            adata.obsp['connectivities'].indptr[i+1]
+        ]
+        neighbor_cell_types = adata.obs['predicted_cell_type'].iloc[neighbor_indices]
+        type_counts = Counter(neighbor_cell_types)
+
+        for cell_type, count in type_counts.items():
+            if count > 5:
+                new_cell_types.iloc[i] = cell_type
+                break
+
+    adata.obs['cell_type_final'] = new_cell_types
+    return adata

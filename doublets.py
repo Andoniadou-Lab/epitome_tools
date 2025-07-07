@@ -25,7 +25,7 @@ def load_doublet_model(model_path,label_encoder_path,threshold_path):
     return model, label_encoder, threshold, feature_names
 
 
-def prepare_matrix_doublet(adata, feature_names):
+def prepare_matrix_doublet(adata, feature_names,nan_or_zero='nan'):
 
     adata_to_handle = adata.copy()
 
@@ -64,7 +64,11 @@ def prepare_matrix_doublet(adata, feature_names):
     combined_feature_indices = {name: i for i, name in enumerate(combined_feature_names)}
     print(f"Combined matrix shape for model 1: {combined_X1.shape}")
 
-    X_final = np.full((n_obs, len(feature_names)), np.nan, dtype=np.float32)
+    if nan_or_zero == 'nan':
+        X_final = np.full((n_obs, len(feature_names)), np.nan, dtype=np.float32)
+    elif nan_or_zero == 'zero':
+        X_final = np.zeros((n_obs, len(feature_names)), dtype=np.float32)
+        
     target_feature_indices = {name: i for i, name in enumerate(feature_names)}
 
     # Reuse combined_feature_indices1, available_features1, source_indices1 from Model 1
