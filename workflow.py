@@ -153,9 +153,9 @@ def doublet_workflow(adata,modality,in_place=True, nan_or_zero='nan'):
 
 
     # Prepare the matrix for doublet prediction
-    X_final = prepare_matrix_doublet(adata, feature_names)
+    X_final = prepare_matrix_doublet(adata, feature_names, nan_or_zero=nan_or_zero)
     # Perform doublet prediction
-    predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold, nan_or_zero=nan_or_zero)
+    predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold)
     # Add predictions to adata
     if in_place:
         adata.obs['predicted_doublet'] = predicted_doublet_labels
