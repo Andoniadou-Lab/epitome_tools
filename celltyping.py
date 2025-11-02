@@ -49,6 +49,8 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
     if active_assay not in ['sc', 'sn', 'multi_rna']:
         print(f"Warning: Active assay '{active_assay}' not recognized. Defaulting to 'sc'.")
         active_assay = 'sc'
+    #add prefix
+    active_assay = f"assay_{active_assay}_onehot"
 
     if active_assay in assay_feature_indices1:
         assay_data1[:, assay_feature_indices1[active_assay]] = 1.0

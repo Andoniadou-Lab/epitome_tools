@@ -25,12 +25,14 @@ def load_doublet_model(model_path,label_encoder_path,threshold_path):
     return model, label_encoder, threshold, feature_names
 
 
-def prepare_matrix_doublet(adata, feature_names,nan_or_zero='nan'):
+def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero='nan'):
 
     adata_to_handle = adata.copy()
 
-    # Define all potential assay features based on feature_names_sorted1
-    assay_features = [f for f in feature_names if f.startswith('total_')]
+    assay_features1 = [f for f in feature_names if f.startswith('pct_counts_kept')]
+    assay_features2 = [f for f in feature_names if f.endswith('one_hot')]
+
+    assay_features = assay_features1 + assay_features2
 
     #number of cells
     n_obs = adata_to_handle.n_obs
@@ -40,6 +42,24 @@ def prepare_matrix_doublet(adata, feature_names,nan_or_zero='nan'):
 
     # Create a mapping from assay feature name to its column index
     assay_feature_indices = {name: i for i, name in enumerate(assay_features)}
+
+    #active assay must be one of sc, sn, multi_rna, if neither, set it as sc
+    if active_assay not in ['sc', 'sn', 'multi_rna']:
+        print(f"Warning: Active assay '{active_assay}' not recognized. Defaulting to 'sc'.")
+        active_assay = 'sc'
+        #add as prefix
+    active_assay = f"{active_assay}_one_hot"
+
+
+    if active_assay in assay_feature_indices:
+        assay_data[:, assay_feature_indices[active_assay]] = 1.0
+
+    #add adata_to_handle.obs['pct_counts_kept'] if exists
+    if 'pct_counts_kept' in adata_to_handle.obs.columns and 'pct_counts_kept' in assay_feature_indices:
+        print("Adding 'pct_counts_kept' to assay data.")
+        #print first 5 values
+        print(adata_to_handle.obs['pct_counts_kept'].values[:5])
+        assay_data[:, assay_feature_indices['pct_counts_kept']] = adata_to_handle.obs['pct_counts_kept'].values.astype(np.float32)
 
     # Convert assay data to sparse if original data is sparse
     assay_data_matrix = sp.csr_matrix(assay_data) if sp.issparse(adata_to_handle.X) else assay_data
@@ -99,22 +119,21 @@ def perform_doublet_prediction(matrix, model, label_encoder, threshold):
     predicted_doublet_labels = label_encoder.inverse_transform(predicted_labels)
     probas = model.predict_proba(matrix) # Get probabilities
     print("Doublet prediction with model complete.")
-    is_doublet = np.full(n_obs, False, dtype=bool) # Default: not a doublet
+    is_doublet = np.full(n_obs, True, dtype=bool) # Default: not a doublet
     doublet_score = np.zeros(n_obs)
 
     if probas.shape[1] > 1:
-      doublet_probabilities = probas[:, 1]
+        doublet_probabilities = probas[:, 1]
     elif probas.shape[1] == 1:
-       doublet_probabilities = probas[:, 0]
+        doublet_probabilities = probas[:, 0]
     else:
-       doublet_probabilities = np.zeros(n_obs)
-       print("Warning: Model 2 probas has shape < 1")
+        doublet_probabilities = np.zeros(n_obs)
+        print("Warning: Model 2 probas has shape < 1")
 
     for i in range(n_obs):
-        if predicted_doublet_labels[i] == 'doublet': # Only check if model2 predicts doublet
-            doublet_score[i] = doublet_probabilities[i]
-            if doublet_probabilities[i] < threshold:
-                is_doublet[i] = True
+        doublet_score[i] = 1 - doublet_probabilities[i]
+        if doublet_probabilities[i] > (1-threshold):
+            is_doublet[i] = False
 
 
     return predicted_doublet_labels, is_doublet, doublet_score

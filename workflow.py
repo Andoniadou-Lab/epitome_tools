@@ -87,25 +87,47 @@ def check_sample_compatibility_normalization(adata, force=False):
     return passing, not_normed, not_logged
 
 
+def pct_counts_kept(adata):
+  counts_per_10k_current = adata.X.sum(axis=1) / 10000
+
+  return np.asarray(counts_per_10k_current).flatten()
+
+
+def calc_pct_counts_kept(adata, features):
+    copied_adata = adata.copy()
+    features_in_data = [f for f in features if f in copied_adata.var_names]
+    copied_adata = copied_adata[:, features_in_data].copy()
+    #undo log1p
+    if sp.issparse(copied_adata.X):
+        copied_adata.X = copied_adata.X.expm1()
+    else:
+        copied_adata.X = np.expm1(copied_adata.X)
+
+    adata.obs["pct_counts_kept"] = pct_counts_kept(copied_adata)
+    return adata
+
+
 def get_base_path():
     """Get the absolute path to the project root directory."""
     # Check for environment variable first
     return Path(__file__).parent
 
 
-def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan',smoothing=True):
+def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan',smoothing=True):
     """
     Main workflow for cell type prediction.
     """
+    adata = adata_to_use.copy()
+    adata.var_names_make_unique()
 
     base_path = get_base_path()
     if modality == "rna":
-        model_path = f"{base_path}/models/rna_model_full_data_fixed_params_weighted_0526.json"
-        label_encoder_path = f'{base_path}/models/label_encoder_full_data_fixed_params_weighted_0430.pkl'
+        model_path = f"{base_path}/models/rna_model.json"
+        label_encoder_path = f'{base_path}/models/label_encoder_rna.pkl'
 
     elif modality == "atac":
-        model_path = f"/{base_path}/models/atac_model_full_data_fixed_params_weighted_0526.json"
-        label_encoder_path = f'{base_path}/models/label_encoder_atac_full_data_fixed_params_weighted_0430.pkl'
+        model_path = f"/{base_path}/models/atac_model.json"
+        label_encoder_path = f'{base_path}/models/label_encoder_atac.pkl'
 
 
     model, label_encoder, feature_names = load_celltype_model(model_path, label_encoder_path)
@@ -129,20 +151,22 @@ def cell_type_workflow(adata, active_assay="sc",modality="rna",in_place=True, na
         return predicted_cell_types
 
 
-def doublet_workflow(adata,modality,in_place=True, nan_or_zero='nan'):
+def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan'):
+
+    adata = adata_to_use.copy()
+    adata.var_names_make_unique()
 
     base_path = get_base_path()
 
-
     if modality == "rna":
-        model_path = f"{base_path}/models/rna_model_binary_full_data_fixed_params_weighted_0515.json"
-        label_encoder_path = f'{base_path}/models/label_encoder_binary_full_data_fixed_params_weighted_0515.pkl'
-        threshold_path = f'{base_path}/models/final_threshold_0515.pkl'
+        model_path = f"{base_path}/models/rna_model_binary.json"
+        label_encoder_path = f'{base_path}/models/rna_label_encoder_binary.pkl'
+        threshold_path = f'{base_path}/models/final_threshold.pkl'
 
     elif modality == "atac":
-        model_path = f"{base_path}/models/atac_model_binary_full_data_fixed_params_weighted_0515.json"
-        label_encoder_path = f'{base_path}/models/label_encoder_binary_atac_full_data_fixed_params_weighted_0515.pkl'
-        threshold_path = f'{base_path}/models/final_threshold_atac_0515.pkl'
+        model_path = f"{base_path}/models/atac_model_binary.json"
+        label_encoder_path = f'{base_path}/models/atac_label_encoder_binary.pkl'
+        threshold_path = f'{base_path}/models/atac_final_threshold.pkl'
 
     model, label_encoder, threshold, feature_names = load_doublet_model(model_path, label_encoder_path, threshold_path)
 
@@ -151,16 +175,16 @@ def doublet_workflow(adata,modality,in_place=True, nan_or_zero='nan'):
     check_sample_compatibility_features(adata, feature_names, return_present=False, return_missing=False)
     check_sample_compatibility_normalization(adata, force=False)
 
-
+    adata = calc_pct_counts_kept(adata, feature_names)
     # Prepare the matrix for doublet prediction
-    X_final = prepare_matrix_doublet(adata, feature_names, nan_or_zero=nan_or_zero)
+    X_final = prepare_matrix_doublet(adata, feature_names, active_assay=active_assay, nan_or_zero=nan_or_zero)
     # Perform doublet prediction
     predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold)
     # Add predictions to adata
     if in_place:
-        adata.obs['predicted_doublet'] = predicted_doublet_labels
-        adata.obs['is_doublet'] = is_doublet
-        adata.obs['doublet_score'] = doublet_score
+        adata.obs['init_predicted_doublet_epitome'] = predicted_doublet_labels
+        adata.obs['thresholded_doublet_epitome'] = is_doublet
+        adata.obs['doublet_score_epitome'] = doublet_score
         return adata
     else:
         return predicted_doublet_labels
@@ -171,5 +195,5 @@ def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place
     Main workflow for cell type and doublet prediction.
     """
     adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing)
-    adata = doublet_workflow(adata, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero)
+    adata = doublet_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero)
     return adata
