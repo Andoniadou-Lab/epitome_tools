@@ -117,7 +117,11 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     """
     Main workflow for cell type prediction.
     """
-    adata = adata_to_use.copy()
+    if in_place:
+        adata = adata_to_use
+    else:
+        adata = adata_to_use.copy()
+    
     adata.var_names_make_unique()
 
     base_path = get_base_path()
@@ -141,19 +145,25 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     # Perform cell type prediction
     predicted_cell_types, probas = perform_celltype_prediction(X_final, model, label_encoder)
     # Add predictions to adata
-    if in_place:
-        adata.obs['predicted_cell_type'] = predicted_cell_types
-        adata.obs['predicted_cell_type_proba'] = probas.max(axis=1)  # Store max probability
-        if smoothing:
-            adata = smoothing_cell_types(adata)
-        return adata
-    else:
-        return predicted_cell_types
+    
+    adata.obs['predicted_cell_type'] = predicted_cell_types
+    adata.obs['predicted_cell_type_proba'] = probas.max(axis=1)  # Store max probability
+
+    for i, label in enumerate(label_encoder.classes_):
+        adata.obs[f'proba_{label}'] = probas[:, i]
+
+
+    if smoothing:
+        adata = smoothing_cell_types(adata)
+    return adata
 
 
 def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan'):
 
-    adata = adata_to_use.copy()
+    if in_place:
+        adata = adata_to_use
+    else:
+        adata = adata_to_use.copy()
     adata.var_names_make_unique()
 
     base_path = get_base_path()
@@ -181,14 +191,11 @@ def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True
     # Perform doublet prediction
     predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold)
     # Add predictions to adata
-    if in_place:
-        adata.obs['init_predicted_doublet_epitome'] = predicted_doublet_labels
-        adata.obs['thresholded_doublet_epitome'] = is_doublet
-        adata.obs['doublet_score_epitome'] = doublet_score
-        return adata
-    else:
-        return predicted_doublet_labels
     
+    adata.obs['init_predicted_doublet_epitome'] = predicted_doublet_labels
+    adata.obs['thresholded_doublet_epitome'] = is_doublet
+    adata.obs['doublet_score_epitome'] = doublet_score
+    return adata
 
 def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True, nan_or_zero='nan', smoothing=True):
     """
