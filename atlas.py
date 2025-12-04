@@ -859,15 +859,17 @@ def shrink_high_values_normalized_df(df, column_name="ambient_profile_mrna", per
 
 
 ### Code for the ATAC processing
-
-def qc_atac(adata):
+def qc_atac(adata, log_n_frag_mad=3):
     #
     adata.obs["log_n_frags"] = np.log2(adata.obs['n_fragment'] )
     #keep top 10K cells
-    keep = adata.obs["log_n_frags"].nlargest(10000).index
+    data_array = np.array(adata.obs["n_fragments"])
+    sorted_indices = np.argsort(data_array)[::-1]
+    keep = sorted_indices[:10000].tolist()
+    
     adata = adata[keep].copy()
 
-    log_n_frags = mad_outlier(adata, "log_n_frags", 3, upper_only=False, value=True)
+    log_n_frags = mad_outlier(adata, "log_n_frags", log_n_frag_mad, upper_only=False, value=True)
 
     # Create a 2x3 grid of subplots (5 plots, one empty)
     fig, axs = plt.subplots(1, 2, figsize=(7, 6))
