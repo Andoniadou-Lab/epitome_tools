@@ -2,13 +2,58 @@ import numpy as np
 import scipy.sparse as sp
 import joblib
 import xgboost as xgb
+from importlib import resources
 from pathlib import Path
 
+from importlib import resources
+from pathlib import Path
 
-def load_doublet_model(model_path,label_encoder_path,threshold_path):
+def get_doublet_path(
+    version: str,
+    species: str,
+    modality: str,
+) -> tuple[Path, Path, Path]:
+    """
+    Resolve packaged doublet model paths inside epitome_tools.
+    
+    Returns:
+        model_path: Path to the XGBoost JSON model
+        label_encoder_path: Path to the label encoder (joblib)
+        threshold_path: Path to the threshold (joblib)
+    """
+    if modality == "rna":
+        task = "doublet_rna"
+        model_file = "rna_model_binary.json"
+        label_encoder_file = "rna_label_encoder_binary.pkl"
+        threshold_file = "final_threshold.pkl"
+    elif modality == "atac":
+        task = "doublet_atac"
+        model_file = "atac_model_binary.json"
+        label_encoder_file = "atac_label_encoder_binary.pkl"
+        threshold_file = "atac_final_threshold.pkl"
+    else:
+        raise ValueError(f"Unsupported modality: {modality}")
+
+    base_path = resources.files("epitome_tools") / "models" / version / species / task
+
+    model_path = base_path / model_file
+    label_encoder_path = base_path / label_encoder_file
+    threshold_path = base_path / threshold_file
+
+    # Optional sanity check
+    for path in (model_path, label_encoder_path, threshold_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Packaged file not found: {path}")
+
+    return model_path, label_encoder_path, threshold_path
+
+
+def load_doublet_model(version="v_0.02",species="mouse", modality="rna"):
     """
     Load the XGBoost model for doublet prediction from the specified path.
     """
+
+    model_path, label_encoder_path, threshold_path = get_doublet_path(version, species, modality)
     model = xgb.XGBClassifier()
     model.load_model(model_path)
 
@@ -50,7 +95,6 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
         #add as prefix
     active_assay = f"{active_assay}_one_hot"
 
-
     if active_assay in assay_feature_indices:
         assay_data[:, assay_feature_indices[active_assay]] = 1.0
 
@@ -64,7 +108,7 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
     # Convert assay data to sparse if original data is sparse
     assay_data_matrix = sp.csr_matrix(assay_data) if sp.issparse(adata_to_handle.X) else assay_data
 
-    # --- 2. Combine Gene Expression and Assay Features for Model 1 ---
+    # --- 2. Combine Gene Expression and Assay Features for Model 2 ---
     # We need to combine these temporarily to easily subset later
 
     # Ensure original data is CSR for efficient column slicing if sparse
@@ -82,7 +126,7 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
 
     # Create a mapping from the combined feature names to their column index
     combined_feature_indices = {name: i for i, name in enumerate(combined_feature_names)}
-    print(f"Combined matrix shape for model 1: {combined_X1.shape}")
+    print(f"Combined matrix shape for model 2: {combined_X1.shape}")
 
     if nan_or_zero == 'nan':
         X_final = np.full((n_obs, len(feature_names)), np.nan, dtype=np.float32)
@@ -91,7 +135,7 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
         
     target_feature_indices = {name: i for i, name in enumerate(feature_names)}
 
-    # Reuse combined_feature_indices1, available_features1, source_indices1 from Model 1
+    # Reuse combined_feature_indices1, available_features1, source_indices1 from Model 2
     available_features = [f for f in feature_names if f in combined_feature_indices] 
     missing_features = [f for f in feature_names if f not in combined_feature_indices]
 
@@ -106,10 +150,10 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
     if sp.issparse(combined_X1):
         # Slice sparse matrix efficiently and convert to dense for assignment
         X_final[:, target_indices] = combined_X1[:, source_indices].toarray()
-        print("Filled final matrix for model 1 from sparse data.")
+        print("Filled final matrix for model 2 from sparse data.")
     else:
         X_final[:, target_indices] = combined_X1[:, source_indices]
-        print("Filled final matrix for model 1 from dense data.")
+        print("Filled final matrix for model 2 from dense data.")
     return X_final
 
 def perform_doublet_prediction(matrix, model, label_encoder, threshold):

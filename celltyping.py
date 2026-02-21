@@ -7,10 +7,50 @@ import scanpy as sc
 import pandas as pd
 from collections import Counter
 
-def load_celltype_model(model_path,label_encoder_path):
+from importlib import resources
+from pathlib import Path
+
+def get_cell_typing_path(
+    version: str,
+    species: str,
+    modality: str,
+) -> tuple[Path, Path]:
+    """
+    Resolve packaged doublet model paths inside epitome_tools.
+    
+    Returns:
+        model_path: Path to the XGBoost JSON model
+        label_encoder_path: Path to the label encoder (joblib)
+    """
+    if modality == "rna":
+        task = "cell_typing_rna"
+        model_file = "rna_model.json"
+        label_encoder_file = "label_encoder_rna.pkl"
+    elif modality == "atac":
+        task = "cell_typing_atac"
+        model_file = "atac_model.json"
+        label_encoder_file = "label_encoder_atac.pkl"
+    else:
+        raise ValueError(f"Unsupported modality: {modality}")
+
+    base_path = resources.files("epitome_tools") / "models" / version / species / task
+
+    model_path = base_path / model_file
+    label_encoder_path = base_path / label_encoder_file
+
+    # Optional sanity check
+    for path in (model_path, label_encoder_path):
+        if not path.exists():
+            raise FileNotFoundError(f"Packaged file not found: {path}")
+
+    return model_path, label_encoder_path
+
+
+def load_celltype_model(version="v_0.02",species="mouse", modality="rna"):
     """
     Load the XGBoost model from the specified path.
     """
+    model_path, label_encoder_path = get_cell_typing_path(version, species, modality)
     model = xgb.XGBClassifier()
     model.load_model(model_path)
 

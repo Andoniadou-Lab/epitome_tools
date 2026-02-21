@@ -107,13 +107,9 @@ def calc_pct_counts_kept(adata, features):
     return adata
 
 
-def get_base_path():
-    """Get the absolute path to the project root directory."""
-    # Check for environment variable first
-    return Path(__file__).parent
 
 
-def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan',smoothing=True):
+def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan',smoothing=True, version="v_0.02",species="mouse"):
     """
     Main workflow for cell type prediction.
     """
@@ -124,17 +120,7 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     
     adata.var_names_make_unique()
 
-    base_path = get_base_path()
-    if modality == "rna":
-        model_path = f"{base_path}/models/rna_model.json"
-        label_encoder_path = f'{base_path}/models/label_encoder_rna.pkl'
-
-    elif modality == "atac":
-        model_path = f"/{base_path}/models/atac_model.json"
-        label_encoder_path = f'{base_path}/models/label_encoder_atac.pkl'
-
-
-    model, label_encoder, feature_names = load_celltype_model(model_path, label_encoder_path)
+    model, label_encoder, feature_names = load_celltype_model(version=version, species=species, modality=modality)
 
     #checks
     check_sample_compatibility_features(adata, feature_names, return_present=False, return_missing=False)
@@ -158,7 +144,7 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     return adata
 
 
-def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan'):
+def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan', version="v_0.02",species="mouse"):
 
     if in_place:
         adata = adata_to_use
@@ -166,19 +152,8 @@ def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True
         adata = adata_to_use.copy()
     adata.var_names_make_unique()
 
-    base_path = get_base_path()
 
-    if modality == "rna":
-        model_path = f"{base_path}/models/rna_model_binary.json"
-        label_encoder_path = f'{base_path}/models/rna_label_encoder_binary.pkl'
-        threshold_path = f'{base_path}/models/final_threshold.pkl'
-
-    elif modality == "atac":
-        model_path = f"{base_path}/models/atac_model_binary.json"
-        label_encoder_path = f'{base_path}/models/atac_label_encoder_binary.pkl'
-        threshold_path = f'{base_path}/models/atac_final_threshold.pkl'
-
-    model, label_encoder, threshold, feature_names = load_doublet_model(model_path, label_encoder_path, threshold_path)
+    model, label_encoder, threshold, feature_names = load_doublet_model(version=version, species=species, modality=modality)
 
 
     #checks
@@ -197,10 +172,10 @@ def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True
     adata.obs['doublet_score_epitome'] = doublet_score
     return adata
 
-def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True, nan_or_zero='nan', smoothing=True):
+def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True, nan_or_zero='nan', smoothing=True, version="v_0.02",species="mouse"):
     """
     Main workflow for cell type and doublet prediction.
     """
-    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing)
-    adata = doublet_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero)
+    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing, version=version, species=species)
+    adata = doublet_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, version=version, species=species)
     return adata
