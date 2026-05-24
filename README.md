@@ -1,6 +1,6 @@
 # epitome_tools: ML-Powered Cell Typing and Doublet Detection for Pituitary Single-Cell Data
 
-A Python package for automated cell type annotation and doublet detection in single-cell RNA-seq and ATAC-seq data from pituitary gland studies, powered by XGBoost models trained on the Consensus Pituitary Atlas.
+A Python package for automated cell type annotation and doublet detection in single-cell RNA-seq and ATAC-seq data from mouse pituitary gland studies, powered by XGBoost models trained on the Consensus Pituitary Atlas.
 
 [![DOI](https://zenodo.org/badge/930878390.svg)](https://doi.org/10.5281/zenodo.17154160)
 
@@ -13,7 +13,7 @@ Epitome Tools provides:
 - **Quality control workflows** optimized for pituitary datasets
 - **End-to-end processing pipelines** from raw data to annotated cell atlases
 
-Trained on 1.1+ million cells from 256 biological replicates, these models enable consistent, expert-level analysis across the pituitary research community.
+Trained on 1.3 million cells from ~260 biological replicates, these models enable consistent, expert-level analysis across the pituitary research community.
 
 ## Installation
 
@@ -66,7 +66,7 @@ adata = cell_type_workflow(
 
 **Key Features:**
 - **90-95% accuracy** on unseen datasets across 5-fold cross-validation
-- **11 pituitary cell types**: Stem cells, corticotrophs, melanotrophs, gonadotrophs, somatotrophs, lactotrophs, thyrotrophs, plus endothelial, mesenchymal, immune cells, and pituicytes
+- **11 pituitary cell types**: Stem cells, Corticotrophs, Melanotrophs, Gonadotrophs, Somatotrophs, Lactotrophs, Thyrotrophs, Endothelial cells, Mesenchymal cells, Immune cells, Pituicytes, Erythrocytes
 - **Optional smoothing**: Uses 10 nearest neighbors in PCA space for robust predictions
 - **Automatic validation**: Checks feature compatibility (≥70% overlap) and normalization
 
@@ -160,6 +160,9 @@ Models automatically validate:
 - **Normalization**: Detects improper log-normalization
 - **Cell count**: Warns if >50,000 cells (check filtering)
 
+
+
+# Additional modules (beyond automated cell typing)
 ## Atlas Module
 
 The `atlas` module provides tools for large-scale dataset processing and atlas construction, particularly for pituitary studies.
@@ -231,49 +234,6 @@ adjusted_df = shrink_high_values_normalized_df(
 )
 ```
 
-## Advanced Usage
-
-### Manual Model Loading
-
-```python
-from epitome_tools.celltyping import load_celltype_model
-from epitome_tools.doublets import load_doublet_model
-
-# Load cell typing model
-model, encoder, features = load_celltype_model(
-    model_path="path/to/model.json",
-    label_encoder_path="path/to/encoder.pkl"
-)
-
-# Load doublet model
-model, encoder, threshold, features = load_doublet_model(
-    model_path="path/to/model.json",
-    label_encoder_path="path/to/encoder.pkl",
-    threshold_path="path/to/threshold.pkl"
-)
-```
-
-### Custom Matrix Preparation
-
-```python
-from epitome_tools.celltyping import prepare_matrix_celltype
-from epitome_tools.doublets import prepare_matrix_doublet
-
-# Prepare for cell typing
-X = prepare_matrix_celltype(
-    adata, 
-    feature_names, 
-    active_assay="sn",
-    nan_or_zero='zero'
-)
-
-# Prepare for doublet detection
-X = prepare_matrix_doublet(
-    adata,
-    feature_names,
-    active_assay="sc"
-)
-```
 
 ## Model Performance
 
@@ -299,7 +259,7 @@ Kövér et al. (2025). Consensus Pituitary Atlas, a scalable resource for annota
 novel marker discovery and age-sex analysis. [Manuscript in preparation]
 ```
 
-**For the Epitome platform:**
+**For the epitome platform (see epitome-atlas.com):**
 ```
 Kövér, B., Kaufman-Cook, J., Sherwin, O., Vazquez Segoviano, M., Kemkem, Y., 
 Lu, H.-C., & Andoniadou, C. (2025). Electronic Pituitary Omics (epitome) platform. 
@@ -308,8 +268,9 @@ Zenodo. https://doi.org/10.5281/zenodo.17154160
 
 ## Related Resources
 
-- **Epitome Platform**: https://epitome.sites.er.kcl.ac.uk/ - Interactive web interface for exploring the Consensus Pituitary Atlas
-- **Consensus Pituitary Atlas**: 1.1M+ cells, uniformly processed
+- **Epitome Platform** [GitHub](https://github.com/Andoniadou-Lab/epitome): epitome-atlas.com - Interactive web interface for exploring the Consensus Pituitary Atlas
+- **Consensus Pituitary Atlas** [GitHub](https://github.com/Andoniadou-Lab/consensus_pituitary_atlas): 1.3M+ cells, uniformly processed
+- 
 
 ## Support
 
@@ -319,6 +280,7 @@ For issues, questions, or feature requests:
 
 
 ## Acknowledgments
+
 This work was supported by the Wellcome Trust Advanced Therapies for Regenerative Medicine PhD Programme (218461/Z/19/Z). Special thanks to the Andoniadou Lab at King's College London and all contributors to the Consensus Pituitary Atlas.
 
 ---
@@ -326,3 +288,6 @@ This work was supported by the Wellcome Trust Advanced Therapies for Regenerativ
 **Developer and Lead Curator**: Bence Kövér  
 **Lab**: Andoniadou Lab, King's College London  
 **Contact**: bence.kover@kcl.ac.uk
+
+https://bsky.app/profile/bencekover.bsky.social
+https://www.linkedin.com/in/bence-kover/
