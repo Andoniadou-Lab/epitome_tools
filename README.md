@@ -255,8 +255,7 @@ If you use Epitome Tools in your research, please cite:
 
 **For the models and package:**
 ```
-Kövér et al. (2025). Consensus Pituitary Atlas, a scalable resource for annotation, 
-novel marker discovery and age-sex analysis. [Manuscript in preparation]
+Kövér, B., Willis, T.L., Sherwin, O., Kaufman-Cook, J., Kemkem, Y., Segoviano, M.V., Lodge, E.J., Zamojski, M., Mendelev, N., Zhang, Z., et al. (2026). Consensus Pituitary Atlas, a scalable resource for annotation, novel marker discovery, and analyses in mouse pituitary gland research. Cell Rep. 45. https://doi.org/10.1016/j.celrep.2026.117407. 
 ```
 
 **For the epitome platform (see epitome-atlas.com):**
