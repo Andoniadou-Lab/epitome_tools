@@ -74,7 +74,7 @@ def fastq_downloader(raw_path, df):
                     subprocess.run(fastqdump_command, shell=True)
 
 
-def run_kb_count_nac(nac_path,raw_path, df, species="mouse"):
+def run_kb_count_nac(nac_path,raw_path, df, species="mouse", multiome_whitelist_path=None):
     """ Runs kb count for nascent RNA datasets.
     Args:
         nac_path (str): Path to the directory where nascent RNA datasets will be stored.
@@ -153,7 +153,10 @@ def run_kb_count_nac(nac_path,raw_path, df, species="mouse"):
             #from all_fastqs remove ones that contain "atac"
             all_fastqs = [x for x in all_fastqs if "atac" not in x]
             print(all_fastqs)
-            kbcount_nac_command1 = f"kb count -i index_nac.idx -g t2g_nac.txt -c1 cdna.txt -c2 nascent.txt -x {tech} -w /10xMultiome/gex_737K-arc-v1.txt --workflow=nac --sum=total --overwrite --h5ad -o {output_dir} {' '.join(all_fastqs)}"
+            if multiome_whitelist_path is None:
+                multiome_whitelist_path = "/content/10xMultiome/gex_737K-arc-v1.txt" #default for colab
+
+            kbcount_nac_command1 = f"kb count -i index_nac.idx -g t2g_nac.txt -c1 cdna.txt -c2 nascent.txt -x {tech} -w {multiome_whitelist_path} --workflow=nac --sum=total --overwrite --h5ad -o {output_dir} {' '.join(all_fastqs)}"
             print(kbcount_nac_command1)
             subprocess.run(kbcount_nac_command1, shell=True)
 

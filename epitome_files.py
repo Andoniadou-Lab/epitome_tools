@@ -1,4 +1,3 @@
-
 import os
 import time
 import pandas as pd
@@ -15,6 +14,7 @@ import scipy.io
 import zipfile
 import decoupler as dc
 import shutil
+from zipfile import ZipInfo
 
 from concurrent.futures import ProcessPoolExecutor
 anndata.settings.allow_write_nullable_strings = True
@@ -797,8 +797,6 @@ def simplify_and_process_adatas(df,
             continue
 
 
-
-
 #wrap function to call save_all_h5s
 def save_all_h5s(atlas_source_path = '/content/drive/MyDrive/pituitary_atlas/source_table/pituitary_atlas.xlsx',
                   Modality = ['sc','sn','multi_rna'],
@@ -885,7 +883,9 @@ def zip_summary_pdfs(atlas_source_path = '/content/drive/MyDrive/pituitary_atlas
             if os.path.exists(pdf_path):
                 # Create new filename with SRA_ID
                 new_filename = f"summary_{sra_id}.pdf"
-                zipf.write(pdf_path, arcname=new_filename)
+                with open(pdf_path, "rb") as f:
+                  zip_info = ZipInfo(new_filename)
+                  zipf.writestr(zip_info, f.read())
                 print(f"Added {pdf_path} as {new_filename} to zip")
             else:
                 print(f"PDF not found: {pdf_path}")
@@ -1310,17 +1310,3 @@ def read_merge_save_pbulk(
 
   # Now, try saving the AnnData object
   pdatas_merged.write(f"{output_path}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-

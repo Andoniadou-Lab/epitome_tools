@@ -113,6 +113,10 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     """
     Main workflow for cell type prediction.
     """
+
+    if species=="human":
+        print("Human model is still in development and is not recommended for use, results may not be accurate.")
+
     if in_place:
         adata = adata_to_use
     else:
@@ -146,6 +150,10 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
 
 def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan', version="v_0.02",species="mouse"):
 
+    if species=="human":
+        print("Human model is still in development and is not recommended for use, results may not be accurate.")
+
+
     if in_place:
         adata = adata_to_use
     else:
@@ -176,6 +184,9 @@ def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place
     """
     Main workflow for cell type and doublet prediction.
     """
+    if species=="human":
+        print("Human model is still in development and is not recommended for use, results may not be accurate.")
+        
     adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing, version=version, species=species)
     adata = doublet_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, version=version, species=species)
     return adata
