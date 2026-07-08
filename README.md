@@ -59,7 +59,7 @@ adata = cell_type_workflow(
     active_assay="sc",      # Assay type: "sc", "sn", or "multi_rna"
     modality="rna",         # Modality: "rna" or "atac"
     in_place=True,          # Modify adata directly
-    nan_or_zero='nan',      # Handle missing features
+    nan_or_zero='zero',     # Handle missing features
     smoothing=True          # Apply neighbor-based smoothing
 )
 ```
@@ -73,6 +73,7 @@ adata = cell_type_workflow(
 **Output columns in `adata.obs`:**
 - `predicted_cell_type`: Raw model predictions
 - `predicted_cell_type_proba`: Maximum prediction probability
+- `cell_type_uncertainty`: `1 - predicted_cell_type_proba`
 - `cell_type_final`: Smoothed predictions (if `smoothing=True`)
 
 ### Doublet Detection
@@ -99,6 +100,8 @@ adata = doublet_workflow(
 - `init_predicted_doublet_epitome`: Raw predictions
 - `thresholded_doublet_epitome`: Boolean calls (True = singlet, False = doublet)
 - `doublet_score_epitome`: Confidence score (higher = more likely singlet)
+- `final_doublet_label`: Human-readable label, `"real"` or `"doublet"`
+- `doublet_uncertainty`: `1 - max(P(doublet), P(real))`
 
 **Filtering doublets:**
 ```python

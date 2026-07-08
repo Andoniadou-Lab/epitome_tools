@@ -6,9 +6,7 @@ import numpy as np
 import scanpy as sc
 import pandas as pd
 from collections import Counter
-
 from importlib import resources
-from pathlib import Path
 
 def get_cell_typing_path(
     version: str,
@@ -16,7 +14,7 @@ def get_cell_typing_path(
     modality: str,
 ) -> tuple[Path, Path]:
     """
-    Resolve packaged doublet model paths inside epitome_tools.
+    Resolve packaged cell typing model paths inside epitome_tools.
     
     Returns:
         model_path: Path to the XGBoost JSON model
@@ -54,9 +52,6 @@ def load_celltype_model(version="v_0.02",species="mouse", modality="rna"):
     model = xgb.XGBClassifier()
     model.load_model(model_path)
 
-    # Access the booster and retrieve the feature names
-    booster = model.get_booster()
-
     # Get the feature names (these should match the features used for training)
     feature_names = model.feature_names_in_
 
@@ -66,9 +61,11 @@ def load_celltype_model(version="v_0.02",species="mouse", modality="rna"):
 
 
 
-def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero='nan'):
+def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero='zero', verbose=False):
     """
-    Prepare the AnnData object for prediction by selecting the relevant features.
+    Build the model-ready feature matrix (genes + assay one-hot) aligned to
+    the order expected by the cell typing model, filling missing features
+    with NaN or 0 depending on `nan_or_zero`.
     """
 
     adata_to_handle = adata.copy()
@@ -104,7 +101,8 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
     # Ensure original data is CSR for efficient column slicing if sparse
     if sp.issparse(adata_to_handle.X) and not isinstance(adata_to_handle.X, sp.csr_matrix):
         adata_X = adata_to_handle.X.tocsr().copy()
-        print("Converted adata_orig.X to CSR format.")
+        if verbose:
+            print("Converted adata_orig.X to CSR format.")
     else:
         adata_X = adata_to_handle.X.copy()
 
@@ -116,7 +114,8 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
 
     # Create a mapping from the combined feature names to their column index
     combined_feature_indices1 = {name: i for i, name in enumerate(combined_feature_names1)}
-    print(f"Combined matrix shape for model 1: {combined_X1.shape}")
+    if verbose:
+        print(f"Combined matrix shape for model 1: {combined_X1.shape}")
 
     # Initialize the final matrix with NaNs (XGBoost can handle NaNs)
     if nan_or_zero == 'nan':
@@ -134,7 +133,8 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
     if missing_features1:
         print(f"Warning: {len(missing_features1)} features required by model 1 are missing from the data: {missing_features1[:5]}...") # Print first 5
 
-    print(f"Found {len(available_features1)} available features out of {len(feature_names)} required for model 1.")
+    if verbose:
+        print(f"Found {len(available_features1)} available features out of {len(feature_names)} required for model 1.")
 
     # Get the column indices in the *combined* data for the available features - indices of where it is in the combined matrix
     source_indices1 = [combined_feature_indices1[f] for f in available_features1]
@@ -147,10 +147,12 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
     if sp.issparse(combined_X1):
         # Slice sparse matrix efficiently and convert to dense for assignment
         X_final1[:, target_indices1] = combined_X1[:, source_indices1].toarray()
-        print("Filled final matrix for model 1 from sparse data.")
+        if verbose:
+            print("Filled final matrix for model 1 from sparse data.")
     else:
         X_final1[:, target_indices1] = combined_X1[:, source_indices1]
-        print("Filled final matrix for model 1 from dense data.")
+        if verbose:
+            print("Filled final matrix for model 1 from dense data.")
     
     
     return X_final1

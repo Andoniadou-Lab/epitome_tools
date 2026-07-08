@@ -109,9 +109,11 @@ def calc_pct_counts_kept(adata, features):
 
 
 
-def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan',smoothing=True, version="v_0.02",species="mouse"):
+def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=True, nan_or_zero='zero',smoothing=True, version="v_0.02",species="mouse", verbose=False):
     """
-    Main workflow for cell type prediction.
+    Main workflow for cell type prediction. Adds `predicted_cell_type`,
+    `predicted_cell_type_proba`, `cell_type_uncertainty`, per-class `proba_*`
+    columns, and (if `smoothing`) `cell_type_final` to `adata.obs`.
     """
 
     if species=="human":
@@ -131,13 +133,14 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     check_sample_compatibility_normalization(adata, force=False)
 
     # Prepare the matrix for cell type prediction
-    X_final = prepare_matrix_celltype(adata, feature_names, active_assay=active_assay, nan_or_zero=nan_or_zero)
+    X_final = prepare_matrix_celltype(adata, feature_names, active_assay=active_assay, nan_or_zero=nan_or_zero, verbose=verbose)
     # Perform cell type prediction
     predicted_cell_types, probas = perform_celltype_prediction(X_final, model, label_encoder)
     # Add predictions to adata
     
     adata.obs['predicted_cell_type'] = predicted_cell_types
     adata.obs['predicted_cell_type_proba'] = probas.max(axis=1)  # Store max probability
+    adata.obs['cell_type_uncertainty'] = 1 - probas.max(axis=1)
 
     for i, label in enumerate(label_encoder.classes_):
         adata.obs[f'proba_{label}'] = probas[:, i]
@@ -148,7 +151,12 @@ def cell_type_workflow(adata_to_use, active_assay="sc",modality="rna",in_place=T
     return adata
 
 
-def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='nan', version="v_0.02",species="mouse"):
+def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True, nan_or_zero='zero', version="v_0.02",species="mouse", verbose=False):
+    """
+    Main workflow for doublet prediction. Adds `init_predicted_doublet_epitome`,
+    `thresholded_doublet_epitome`, `doublet_score_epitome`, `final_doublet_label`,
+    and `doublet_uncertainty` to `adata.obs`.
+    """
 
     if species=="human":
         print("Human model is still in development and is not recommended for use, results may not be accurate.")
@@ -170,23 +178,25 @@ def doublet_workflow(adata_to_use,active_assay="sc",modality="rna",in_place=True
 
     adata = calc_pct_counts_kept(adata, feature_names)
     # Prepare the matrix for doublet prediction
-    X_final = prepare_matrix_doublet(adata, feature_names, active_assay=active_assay, nan_or_zero=nan_or_zero)
+    X_final = prepare_matrix_doublet(adata, feature_names, active_assay=active_assay, nan_or_zero=nan_or_zero, verbose=verbose)
     # Perform doublet prediction
-    predicted_doublet_labels, is_doublet, doublet_score = perform_doublet_prediction(X_final, model, label_encoder, threshold)
+    predicted_doublet_labels, is_doublet, doublet_score, final_doublet_label, doublet_uncertainty = perform_doublet_prediction(X_final, model, label_encoder, threshold, verbose=verbose)
     # Add predictions to adata
     
     adata.obs['init_predicted_doublet_epitome'] = predicted_doublet_labels
     adata.obs['thresholded_doublet_epitome'] = is_doublet
     adata.obs['doublet_score_epitome'] = doublet_score
+    adata.obs['final_doublet_label'] = final_doublet_label
+    adata.obs['doublet_uncertainty'] = doublet_uncertainty
     return adata
 
-def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True, nan_or_zero='nan', smoothing=True, version="v_0.02",species="mouse"):
+def celltype_doublet_workflow(adata, active_assay="sc", modality="rna", in_place=True, nan_or_zero='zero', smoothing=True, version="v_0.02",species="mouse", verbose=False):
     """
     Main workflow for cell type and doublet prediction.
     """
     if species=="human":
         print("Human model is still in development and is not recommended for use, results may not be accurate.")
         
-    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing, version=version, species=species)
-    adata = doublet_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, version=version, species=species)
+    adata = cell_type_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, smoothing=smoothing, version=version, species=species, verbose=verbose)
+    adata = doublet_workflow(adata, active_assay=active_assay, modality=modality, in_place=in_place, nan_or_zero=nan_or_zero, version=version, species=species, verbose=verbose)
     return adata
