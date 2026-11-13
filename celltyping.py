@@ -5,7 +5,6 @@ import scipy.sparse as sp
 import numpy as np
 import scanpy as sc
 import pandas as pd
-from collections import Counter
 from importlib import resources
 
 def get_cell_typing_path(
@@ -68,19 +67,11 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
     with NaN or 0 depending on `nan_or_zero`.
     """
 
-    adata_to_handle = adata.copy()
-
     # Define all potential assay features based on feature_names_sorted1
     assay_features = [f for f in feature_names if f.startswith('assay_')]
 
     #number of cells
-    n_obs = adata_to_handle.n_obs
-
-    #initialise assay data with zeros
-    assay_data1 = np.zeros((n_obs, len(assay_features)), dtype=np.float32)
-
-    # Create a mapping from assay feature name to its column index
-    assay_feature_indices1 = {name: i for i, name in enumerate(assay_features)}
+    n_obs = adata.n_obs
 
     #active assay must be one of sc, sn, multi_rna, if neither, set it as sc
     if active_assay not in ['sc', 'sn', 'multi_rna']:
@@ -88,34 +79,6 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
         active_assay = 'sc'
     #add prefix
     active_assay = f"assay_{active_assay}_onehot"
-
-    if active_assay in assay_feature_indices1:
-        assay_data1[:, assay_feature_indices1[active_assay]] = 1.0
-
-    # Convert assay data to sparse if original data is sparse
-    assay_data_matrix1 = sp.csr_matrix(assay_data1) if sp.issparse(adata_to_handle.X) else assay_data1
-
-    # --- 2. Combine Gene Expression and Assay Features for Model 1 ---
-    # We need to combine these temporarily to easily subset later
-
-    # Ensure original data is CSR for efficient column slicing if sparse
-    if sp.issparse(adata_to_handle.X) and not isinstance(adata_to_handle.X, sp.csr_matrix):
-        adata_X = adata_to_handle.X.tocsr().copy()
-        if verbose:
-            print("Converted adata_orig.X to CSR format.")
-    else:
-        adata_X = adata_to_handle.X.copy()
-
-    # Combine the matrices horizontally
-    combined_X1 = sp.hstack([adata_X, assay_data_matrix1], format='csr') if sp.issparse(adata_X) else np.hstack([adata_X, assay_data1])
-
-    # Create combined feature names list
-    combined_feature_names1 = adata_to_handle.var_names.tolist() + assay_features
-
-    # Create a mapping from the combined feature names to their column index
-    combined_feature_indices1 = {name: i for i, name in enumerate(combined_feature_names1)}
-    if verbose:
-        print(f"Combined matrix shape for model 1: {combined_X1.shape}")
 
     # Initialize the final matrix with NaNs (XGBoost can handle NaNs)
     if nan_or_zero == 'nan':
@@ -126,35 +89,41 @@ def prepare_matrix_celltype(adata, feature_names,active_assay="sc", nan_or_zero=
     # Create a mapping for the target feature order
     target_feature_indices1 = {name: i for i, name in enumerate(feature_names)}
 
-    # Find which features required by the model are present in our combined data
-    available_features1 = [f for f in feature_names if f in combined_feature_indices1]
-    missing_features1 = [f for f in feature_names if f not in combined_feature_indices1]
+    # Assay one-hot columns are always filled: 1 for the active assay, 0 otherwise
+    for f in assay_features:
+        X_final1[:, target_feature_indices1[f]] = 1.0 if f == active_assay else 0.0
+
+    # Mapping from gene name to its column index in adata
+    gene_feature_indices1 = {name: i for i, name in enumerate(adata.var_names)}
+    assay_feature_set1 = set(assay_features)
+
+    # Find which features required by the model are present in our data
+    available_features1 = [f for f in feature_names if f in gene_feature_indices1 and f not in assay_feature_set1]
+    missing_features1 = [f for f in feature_names if f not in gene_feature_indices1 and f not in assay_feature_set1]
 
     if missing_features1:
         print(f"Warning: {len(missing_features1)} features required by model 1 are missing from the data: {missing_features1[:5]}...") # Print first 5
 
     if verbose:
-        print(f"Found {len(available_features1)} available features out of {len(feature_names)} required for model 1.")
+        print(f"Found {len(available_features1) + len(assay_features)} available features out of {len(feature_names)} required for model 1.")
 
-    # Get the column indices in the *combined* data for the available features - indices of where it is in the combined matrix
-    source_indices1 = [combined_feature_indices1[f] for f in available_features1]
+    # Get the column indices in adata for the available features
+    source_indices1 = [gene_feature_indices1[f] for f in available_features1]
 
     # Get the column indices in the *final* matrix for these available features - indices of where the model expects it
     target_indices1 = [target_feature_indices1[f] for f in available_features1]
 
-    # Fill the final matrix with data from the available features
-    # Ensure data is dense for assignment; handle potential memory issues for large datasets
-    if sp.issparse(combined_X1):
-        # Slice sparse matrix efficiently and convert to dense for assignment
-        X_final1[:, target_indices1] = combined_X1[:, source_indices1].toarray()
+    # Only the model's columns are sliced out and densified, so adata.X is never copied in full
+    adata_X = adata.X
+    if sp.issparse(adata_X):
+        X_final1[:, target_indices1] = adata_X[:, source_indices1].toarray()
         if verbose:
             print("Filled final matrix for model 1 from sparse data.")
     else:
-        X_final1[:, target_indices1] = combined_X1[:, source_indices1]
+        X_final1[:, target_indices1] = adata_X[:, source_indices1]
         if verbose:
             print("Filled final matrix for model 1 from dense data.")
-    
-    
+
     return X_final1
 
 
@@ -163,7 +132,7 @@ def perform_celltype_prediction(matrix, model, label_encoder, return_probas=True
     Perform cell type prediction using the provided model and label encoder.
     """
     probas = model.predict_proba(matrix)
-    predicted_labels = model.predict(matrix)
+    predicted_labels = probas.argmax(axis=1)
     predicted_cell_types = label_encoder.inverse_transform(predicted_labels)
 
     if return_probas:
@@ -184,19 +153,25 @@ def smoothing_cell_types(adata):
 
     new_cell_types = adata.obs['predicted_cell_type'].copy()
 
-    for i in range(adata.n_obs):
-        # Access neighbor indices from the connectivities matrix in adata.obsp
-        neighbor_indices = adata.obsp['connectivities'].indices[
-            adata.obsp['connectivities'].indptr[i]:
-            adata.obsp['connectivities'].indptr[i+1]
-        ]
-        neighbor_cell_types = adata.obs['predicted_cell_type'].iloc[neighbor_indices]
-        type_counts = Counter(neighbor_cell_types)
+    connectivities = adata.obsp['connectivities']
+    cell_type_codes = pd.Categorical(adata.obs['predicted_cell_type'])
+    n_types = len(cell_type_codes.categories)
 
-        for cell_type, count in type_counts.items():
-            if count > 5:
-                new_cell_types.iloc[i] = cell_type
-                break
+    # One entry per stored neighbor, kept in connectivities storage order
+    neighbor_rows = np.repeat(np.arange(adata.n_obs), np.diff(connectivities.indptr))
+    neighbor_codes = cell_type_codes.codes[connectivities.indices]
+    has_type = neighbor_codes >= 0
+    neighbor_rows, neighbor_codes = neighbor_rows[has_type], neighbor_codes[has_type]
+
+    type_counts = np.zeros((adata.n_obs, n_types), dtype=np.int64)
+    np.add.at(type_counts, (neighbor_rows, neighbor_codes), 1)
+
+    # A cell takes the first type, in neighbor order, seen more than 5 times among its neighbors
+    qualifies = type_counts[neighbor_rows, neighbor_codes] > 5
+    qualifying_rows, first_qualifying = np.unique(neighbor_rows[qualifies], return_index=True)
+    new_cell_types.iloc[qualifying_rows] = np.asarray(cell_type_codes.categories)[
+        neighbor_codes[qualifies][first_qualifying]
+    ]
 
     adata.obs['cell_type_final'] = new_cell_types
     return adata

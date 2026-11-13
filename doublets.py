@@ -71,21 +71,13 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
     with NaN or 0 depending on `nan_or_zero`.
     """
 
-    adata_to_handle = adata.copy()
-
     assay_features1 = [f for f in feature_names if f.startswith('pct_counts_kept')]
     assay_features2 = [f for f in feature_names if f.endswith('one_hot')]
 
     assay_features = assay_features1 + assay_features2
 
     #number of cells
-    n_obs = adata_to_handle.n_obs
-
-    #initialise assay data with zeros
-    assay_data = np.zeros((n_obs, len(assay_features)), dtype=np.float32)
-
-    # Create a mapping from assay feature name to its column index
-    assay_feature_indices = {name: i for i, name in enumerate(assay_features)}
+    n_obs = adata.n_obs
 
     #active assay must be one of sc, sn, multi_rna, if neither, set it as sc
     if active_assay not in ['sc', 'sn', 'multi_rna']:
@@ -94,68 +86,48 @@ def prepare_matrix_doublet(adata, feature_names,  active_assay="sc", nan_or_zero
         #add as prefix
     active_assay = f"{active_assay}_one_hot"
 
-    if active_assay in assay_feature_indices:
-        assay_data[:, assay_feature_indices[active_assay]] = 1.0
-
-    #add adata_to_handle.obs['pct_counts_kept'] if exists
-    if 'pct_counts_kept' in adata_to_handle.obs.columns and 'pct_counts_kept' in assay_feature_indices:
-        if verbose:
-            print("Adding 'pct_counts_kept' to assay data.")
-            print(adata_to_handle.obs['pct_counts_kept'].values[:5])
-        assay_data[:, assay_feature_indices['pct_counts_kept']] = adata_to_handle.obs['pct_counts_kept'].values.astype(np.float32)
-
-    # Convert assay data to sparse if original data is sparse
-    assay_data_matrix = sp.csr_matrix(assay_data) if sp.issparse(adata_to_handle.X) else assay_data
-
-    # --- 2. Combine Gene Expression and Assay Features for Model 2 ---
-    # We need to combine these temporarily to easily subset later
-
-    # Ensure original data is CSR for efficient column slicing if sparse
-    if sp.issparse(adata_to_handle.X) and not isinstance(adata_to_handle.X, sp.csr_matrix):
-        adata_X = adata_to_handle.X.tocsr().copy()
-        if verbose:
-            print("Converted adata_orig.X to CSR format.")
-    else:
-        adata_X = adata_to_handle.X.copy()
-
-    # Combine the matrices horizontally
-    combined_X1 = sp.hstack([adata_X, assay_data_matrix], format='csr') if sp.issparse(adata_X) else np.hstack([adata_X, assay_data])
-
-    # Create combined feature names list
-    combined_feature_names = adata_to_handle.var_names.tolist() + assay_features
-
-    # Create a mapping from the combined feature names to their column index
-    combined_feature_indices = {name: i for i, name in enumerate(combined_feature_names)}
-    if verbose:
-        print(f"Combined matrix shape for model 2: {combined_X1.shape}")
-
     if nan_or_zero == 'nan':
         X_final = np.full((n_obs, len(feature_names)), np.nan, dtype=np.float32)
     elif nan_or_zero == 'zero':
         X_final = np.zeros((n_obs, len(feature_names)), dtype=np.float32)
-        
+
     target_feature_indices = {name: i for i, name in enumerate(feature_names)}
 
-    # Reuse combined_feature_indices1, available_features1, source_indices1 from Model 2
-    available_features = [f for f in feature_names if f in combined_feature_indices] 
-    missing_features = [f for f in feature_names if f not in combined_feature_indices]
+    # Assay columns are always filled, defaulting to 0
+    for f in assay_features:
+        X_final[:, target_feature_indices[f]] = 1.0 if f == active_assay else 0.0
+
+    #add adata.obs['pct_counts_kept'] if exists
+    if 'pct_counts_kept' in adata.obs.columns and 'pct_counts_kept' in target_feature_indices:
+        if verbose:
+            print("Adding 'pct_counts_kept' to assay data.")
+            print(adata.obs['pct_counts_kept'].values[:5])
+        X_final[:, target_feature_indices['pct_counts_kept']] = adata.obs['pct_counts_kept'].values.astype(np.float32)
+
+    # Mapping from gene name to its column index in adata
+    gene_feature_indices = {name: i for i, name in enumerate(adata.var_names)}
+    assay_feature_set = set(assay_features)
+
+    available_features = [f for f in feature_names if f in gene_feature_indices and f not in assay_feature_set]
+    missing_features = [f for f in feature_names if f not in gene_feature_indices and f not in assay_feature_set]
 
     if missing_features:
         print(f"Warning: {len(missing_features)} features required by model 2 are missing: {missing_features[:5]}...")
 
     if verbose:
-        print(f"Found {len(available_features)} available features out of {len(feature_names)} required for model 2.")
-    source_indices = [combined_feature_indices[f] for f in available_features] # Use combined_feature_indices1
+        print(f"Found {len(available_features) + len(assay_features)} available features out of {len(feature_names)} required for model 2.")
+    source_indices = [gene_feature_indices[f] for f in available_features]
 
     target_indices = [target_feature_indices[f] for f in available_features]
 
-    if sp.issparse(combined_X1):
-        # Slice sparse matrix efficiently and convert to dense for assignment
-        X_final[:, target_indices] = combined_X1[:, source_indices].toarray()
+    # Only the model's columns are sliced out and densified, so adata.X is never copied in full
+    adata_X = adata.X
+    if sp.issparse(adata_X):
+        X_final[:, target_indices] = adata_X[:, source_indices].toarray()
         if verbose:
             print("Filled final matrix for model 2 from sparse data.")
     else:
-        X_final[:, target_indices] = combined_X1[:, source_indices]
+        X_final[:, target_indices] = adata_X[:, source_indices]
         if verbose:
             print("Filled final matrix for model 2 from dense data.")
     return X_final
@@ -173,9 +145,9 @@ def perform_doublet_prediction(matrix, model, label_encoder, threshold, verbose=
         doublet_uncertainty: 1 - max(P(doublet), P(real)) per cell
     """
     n_obs = matrix.shape[0]
-    predicted_labels = model.predict(matrix)
-    predicted_doublet_labels = label_encoder.inverse_transform(predicted_labels)
     probas = model.predict_proba(matrix) # Get probabilities
+    predicted_labels = probas.argmax(axis=1)
+    predicted_doublet_labels = label_encoder.inverse_transform(predicted_labels)
     if verbose:
         print("Doublet prediction with model complete.")
 

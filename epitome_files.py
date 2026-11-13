@@ -25,30 +25,28 @@ anndata.settings.allow_write_nullable_strings = True
 #####---------------------------------------------------------------------
 
 def remove_redundant_cols(adata):
-  # Use a lambda function to check if column name contains '0' but is not exactly '0'
-  filter_condition = lambda x: '0' in str(x) and str(x) != '0'
+  def drop_mask(cols):
+      # True = drop: name contains '0' (but isn't exactly '0') or contains '-1'
+      return np.array(
+          [('0' in str(c) and str(c) != '0') or ('-1' in str(c)) for c in cols],
+          dtype=bool,
+      )
 
-  # Apply the filter to both adata.obs and adata.var
-  adata.obs = adata.obs.loc[:, ~adata.obs.columns.map(filter_condition)]
-  adata.var = adata.var.loc[:, ~adata.var.columns.map(filter_condition)]
-  adata.obs = adata.obs.loc[:, ~adata.obs.columns.str.contains('-1')]
-  adata.var = adata.var.loc[:, ~adata.var.columns.str.contains('-1')]
+  adata.obs = adata.obs.loc[:, ~drop_mask(adata.obs.columns)]
+  adata.var = adata.var.loc[:, ~drop_mask(adata.var.columns)]
 
-  #rename obs from 1-len
-  adata.obs.index = [f"{i+1}" for i in range(len(adata.obs))]
+  # rename obs from 1-len
+  adata.obs.index = (np.arange(len(adata.obs)) + 1).astype(str)
 
-  #turn to string so saving won't throw error
+  # turn to string so saving won't throw error
   adata.obs.columns = adata.obs.columns.astype(str)
   adata.var.columns = adata.var.columns.astype(str)
 
   for col in adata.obs.columns:
     adata.obs[col] = adata.obs[col].astype(str)
 
-  #remove obsm and layers to make object more lightweight
-
   adata.obsm = {}
   adata.layers = {}
-
   return adata
 
 
@@ -61,28 +59,19 @@ def remove_low_quality_clusters(adata, scvi_labels_to_keep, SRA_ID, df, ignore_c
     print(f"Ignoring core filtering for {SRA_ID}")
     return adata
   
-  elif author == "Rebboah et al. (2025)":
+  cell_ids = adata.obs['0'].astype(str) if '0' in adata.obs.columns else (adata.obs[0].astype(str) if 0 in adata.obs.columns else adata.obs_names.astype(str))
 
-    adata.obs["barcode"] = [GEO + ":" + adata.obs["bc"][i] + "_" + adata.obs["subpool"][i] + "-1"  for i in range(len(adata.obs))]
-    shape1 = adata.shape
-    adata = adata[adata.obs["barcode"].isin(scvi_labels_to_keep[scvi_labels_to_keep["SRA_ID"]==SRA_ID]["barcode"].values)]
-    shape2 = adata.shape
-    print(f"Removed {shape1[0]-shape2[0]} cells")
-
+  if author == "Rebboah et al. (2025)":
+    adata.obs["barcode"] = GEO + ":" + adata.obs["bc"].astype(str) + "_" + adata.obs["subpool"].astype(str) + "-1"
   elif author == "Sochodolsky et al. (2026)":
-     
-    adata.obs["barcode"] = [SRA_ID+":" + adata.obs['0'][i] + "-1" for i in range(len(adata.obs))]
-    shape1 = adata.shape
-    adata = adata[adata.obs["barcode"].isin(scvi_labels_to_keep[scvi_labels_to_keep["SRA_ID"]==SRA_ID]["barcode"].values)]
-    shape2 = adata.shape
-    print(f"Removed {shape1[0]-shape2[0]} cells")
-
+    adata.obs["barcode"] = SRA_ID + ":" + cell_ids + "-1"
   else:
-    adata.obs["barcode"] = [GEO+":" + adata.obs['0'][i] + "-1" for i in range(len(adata.obs))]
-    shape1 = adata.shape
-    adata = adata[adata.obs["barcode"].isin(scvi_labels_to_keep[scvi_labels_to_keep["SRA_ID"]==SRA_ID]["barcode"].values)]
-    shape2 = adata.shape
-    print(f"Removed {shape1[0]-shape2[0]} cells")
+    adata.obs["barcode"] = GEO + ":" + cell_ids + "-1"
+
+  shape1 = adata.shape
+  adata = adata[adata.obs["barcode"].isin(scvi_labels_to_keep[scvi_labels_to_keep["SRA_ID"]==SRA_ID]["barcode"].values)].copy()
+  shape2 = adata.shape
+  print(f"Removed {shape1[0]-shape2[0]} cells")
 
   return adata
 
@@ -98,7 +87,22 @@ def generate_merged_object(nac_path="/content/drive/MyDrive/pituitary_atlas/proc
                            normal = [1],
                            n_cells_threshold = 300,
                            ID_col='SRA_ID',
-                           include_new_samples = False #samples that are Core == 2
+                           include_new_samples = False, #samples that are Core == 2
+                           cell_type_col='new_cell_type',
+                           target_cols_to_keep = [
+                               'SRA_ID',
+                               'GEO',
+                               'Modality',
+                               'Author',
+                               'Name',
+                               'Conditions',
+                               'Normal',
+                               'Background',
+                               'Comp_sex',
+                               'Estrous_stage',
+                               'Age_numeric',
+                               'Release'
+                           ]
                            ):
     
     gc.collect()
@@ -114,6 +118,8 @@ def generate_merged_object(nac_path="/content/drive/MyDrive/pituitary_atlas/proc
           
           ID = df[ID_col][i]
           core_value = df[df[ID_col]==ID]["Core"].values[0]
+          #convert to int
+          core_value = int(core_value)
           print(ID)
           try:
             adata = sc.read(f"{nac_path}{ID}{remaining_path}")
@@ -125,29 +131,55 @@ def generate_merged_object(nac_path="/content/drive/MyDrive/pituitary_atlas/proc
           if not sp.issparse(adata.X):
               adata.X = sp.csr_matrix(adata.X)
           print("Loaded adata shape:", adata.shape)
-          adata.obs[ID_col] = ID
-          print("Added SRA_ID to obs")
-          adata.obs["GEO"] = df[df[ID_col]==ID]["GEO"].values[0]
-          print("Added GEO to obs")
-          adata.obs["assay"] = df[df[ID_col]==ID]["Modality"].values[0]
-          print("Added Modality to obs")
 
+          # 1. Add all metadata to obs
+          adata.obs[ID_col] = ID
+
+          for col in target_cols_to_keep:
+              if col in df.columns:
+                  adata.obs[col] = df[df[ID_col]==ID][col].values[0]
+
+          # 2. Add orig_index
           adata.obs["orig_index"] = adata.obs.index.astype(str)
+
+          # 2b. Keep the barcode so cells can be matched to the UMAP reference later
+          if "0" in adata.obs.columns:
+              adata.obs["cell_barcode"] = adata.obs["0"].astype(str)
+          elif {"bc", "subpool"}.issubset(adata.obs.columns):  # Parse samples
+              adata.obs["cell_barcode"] = adata.obs["bc"].astype(str) + "_" + adata.obs["subpool"].astype(str)
+          else:
+              adata.obs["cell_barcode"] = adata.obs_names.astype(str)
+
           core_action = False
-          if include_new_samples and core_value == 2:
+          if include_new_samples and core_value != 0 and core_value != 1:
             core_action = True #true, therefore ignore filter and keep all cells
              
           if filtering_based_on_barcodes:
             adata = remove_low_quality_clusters(adata, scvi_labels_to_keep, ID, df,ignore_core=core_action)
           
-          if not include_new_samples and core_value == 2:
+          if not include_new_samples and core_value != 0 and core_value != 1:
             print(f"Not including non-core samples, removing {ID}")
             continue
-            
 
-          if ("1" in adata.var_names and "2" in adata.var_names and "3" in adata.var_names) or (1 in adata.var_names and 2 in adata.var_names and 3 in adata.var_names.astype(str)):
-            print("The problematic sample is:", ID)
-            break
+
+          # add new_cell_type to target_cols_to_keep if it exists in adata.obs
+          if cell_type_col in adata.obs.columns:
+              if cell_type_col not in target_cols_to_keep:
+                  target_cols_to_keep.append(cell_type_col)
+
+          # 4. Subset safely using .copy() to decouple from original index structure
+          adata.obs = adata.obs[target_cols_to_keep + ["cell_barcode"]].copy()
+
+          # 5. Rename WITHOUT inplace=True
+          adata.obs = adata.obs.rename(columns={cell_type_col: "cell_type"})
+          print("Filtered obs to only keep relevant columns and renamed cell_type successfully")
+
+
+          var_set = set(adata.var_names.astype(str))
+
+          if "1" in var_set and "2" in var_set and "3" in var_set:
+              print("The problematic sample is:", ID)
+              break
 
           if adata_merged_flag == False:
               adata_merged = adata.copy()
@@ -165,8 +197,10 @@ def generate_merged_object(nac_path="/content/drive/MyDrive/pituitary_atlas/proc
 
       #except print error
       except Exception as e:
-          print(f"Error processing {ID}: {str(e)}")
-          continue
+        import traceback
+        print(f"Error processing {ID}: {type(e).__name__} - {e}")
+        traceback.print_exc()  # Prints the exact line number where it failed
+        continue
 
     print(adata_merged.shape)
     remove_redundant_cols(adata_merged).write(output_path, compression='gzip')
@@ -208,8 +242,9 @@ def generate_cell_count_matrix(df,
         ID = df[ID_col][i]
         print(ID)
         core_value = df[df[ID_col]==ID]["Core"].values[0]
+        core_value = int(core_value)
         core_action = False
-        if include_new_samples and core_value == 2:
+        if include_new_samples and core_value != 0 and core_value != 1:
           core_action = True
 
         try:
@@ -431,8 +466,9 @@ def process_all_datasets(df,
     for i in range(len(df)):
         ID = df[ID_col][i]
         core_value = df[df[ID_col]==ID]["Core"].values[0]
+        core_value = int(core_value)
         core_action = False
-        if include_new_samples and core_value == 2:
+        if include_new_samples and core_value != 0 and core_value != 1:
           core_action = True
         try:
             print(f"\nProcessing {ID}...")
@@ -628,8 +664,9 @@ def process_datasets_abundances(df,
     for i in range(len(df)):
         ID = df[ID_col][i]
         core_value = df[df[ID_col]==ID]["Core"].values[0]
+        core_value = int(core_value)
         core_action = False
-        if include_new_samples and core_value == 2:
+        if include_new_samples and core_value != 0 and core_value != 1:
           core_action = True
         try:
             print(f"Processing {ID}...")
@@ -724,6 +761,8 @@ def simplify_and_process_adatas(df,
                                 back_up_remaining_path="/analysis/adata_assigned.h5ad",
                                 ID_col='SRA_ID',
                                 calc_umaps=True,
+                                cell_type_col='new_cell_type',
+                                cell_type_col_backup='assignments'
                                 ):
     
     """Simplify and process adatas, then save as h5ad files."""
@@ -745,20 +784,22 @@ def simplify_and_process_adatas(df,
             # Simplify var and obs
             adata.var = adata.var.iloc[:, 0:0]  # Keep only index
             try:
-              adata.obs = adata.obs[["new_cell_type"]]
+              adata.obs = adata.obs[[cell_type_col]]
             except:
               try:
-                adata.obs = adata.obs[["assignments"]]
+                adata.obs = adata.obs[[cell_type_col_backup]]
                 #rename to "new_cell_type"
-                adata.obs.rename(columns={"assignments": "new_cell_type"}, inplace=True)
+                adata.obs.rename(columns={cell_type_col_backup: cell_type_col}, inplace=True)
 
               except:
                 adata.obs = adata.obs[["cell_type"]]
                 #rename to "new_cell_type"
-                adata.obs.rename(columns={"cell_type": "new_cell_type"}, inplace=True)
+                adata.obs.rename(columns={"cell_type": cell_type_col}, inplace=True)
 
             #sc.pp.filter_genes(adata, min_cells=20)
             # Processing pipeline
+
+            adata.obs.rename(columns={cell_type_col: "cell_type"}, inplace=True)
 
             adata.layers["counts"] = adata.X.copy()
 
@@ -777,7 +818,7 @@ def simplify_and_process_adatas(df,
 
             adata.X = adata.layers["log1p"].copy()
 
-            sc.pl.umap(adata, color=['new_cell_type'])
+            sc.pl.umap(adata, color=['cell_type'])
 
             #make sure X is a sparse matrix
             if not sp.issparse(adata.X):
@@ -806,7 +847,9 @@ def save_all_h5s(atlas_source_path = '/content/drive/MyDrive/pituitary_atlas/sou
                                 remaining_path="/analysis/adata_new_assigned_0828.h5ad",
                                 back_up_remaining_path="/analysis/adata_assigned.h5ad",
                   ID_col='SRA_ID',
-                  calc_umaps=True
+                  calc_umaps=True,
+                  cell_type_col='new_cell_type',
+                  cell_type_col_backup='assignments',
 
                   ):
    
@@ -827,7 +870,9 @@ def save_all_h5s(atlas_source_path = '/content/drive/MyDrive/pituitary_atlas/sou
                               remaining_path=remaining_path,
                               back_up_remaining_path=back_up_remaining_path,
                               ID_col=ID_col,
-                              calc_umaps=calc_umaps
+                              calc_umaps=calc_umaps,
+                              cell_type_col=cell_type_col,
+                              cell_type_col_backup=cell_type_col_backup
 
                               )
 
@@ -893,34 +938,33 @@ def zip_summary_pdfs(atlas_source_path = '/content/drive/MyDrive/pituitary_atlas
     print(f"Zip file created at: {output_zip_path}")
 
 
-import pandas as pd
-import scanpy as sc
+
 import os
+import re
 import gc
 import zipfile
 from concurrent.futures import ProcessPoolExecutor
 
-def save_gene_batch_parquet(gene_list, sparse_X, obs_names, var_names):
-    """
-    Worker function: Receives only the essential data pieces.
-    This avoids NameErrors and keeps RAM usage predictable.
-    """
-    # Find positions of requested genes
-    gene_indices = [var_names.get_loc(g) for g in gene_list]
-    
-    # Extract columns and convert to dense only for this small batch
-    X_batch = sparse_X[:, gene_indices].toarray()
+import numpy as np
+import pandas as pd
+import scanpy as sc
 
-    batch_df = pd.DataFrame(
-        data=X_batch,
-        index=obs_names,
-        columns=gene_list
-    )
+
+# --- 1. Worker (must stay at module level for ProcessPoolExecutor) ---
+def save_gene_batch_parquet(gene_list, X_batch, obs_names, out_dir="genes_parquet"):
+    """
+    Worker: receives ONLY the columns for its genes (already sliced),
+    so the full matrix is never re-sent to each process.
+    """
+    if hasattr(X_batch, "toarray"):
+        X_batch = X_batch.toarray()
+
+    batch_df = pd.DataFrame(X_batch, index=obs_names, columns=gene_list)
 
     file_paths = []
     for gene in gene_list:
-        file_path = f"genes_parquet/{gene}.parquet"
-        # Using zstd for speed and efficiency
+        safe_name = re.sub(r"[^\w.\-]", "_", gene)  # avoid '/' etc. in filenames
+        file_path = os.path.join(out_dir, f"{safe_name}.parquet")
         batch_df[[gene]].to_parquet(file_path, compression="zstd")
         file_paths.append(file_path)
 
@@ -928,104 +972,160 @@ def save_gene_batch_parquet(gene_list, sparse_X, obs_names, var_names):
     gc.collect()
     return file_paths
 
-# --- 2. The Main Function ---
+
+def _make_cell_ids(d):
+    """cell_id = SRA_ID + '_' + barcode (from obs['cell_barcode'], obs['0'], obs[0], or obs_names)."""
+    if "cell_barcode" in d.obs.columns:
+        ids = d.obs["cell_barcode"].astype(str)
+    elif "0" in d.obs.columns:
+        ids = d.obs["0"].astype(str)
+    elif 0 in d.obs.columns:
+        ids = d.obs[0].astype(str)
+    else:
+        ids = pd.Series(d.obs_names.astype(str), index=d.obs_names)
+    d.obs["cell_id"] = d.obs["SRA_ID"].astype(str) + "_" + ids
+
+
+# --- 2. Main function ---
 def generate_atlas_umap(
-    atlas_path='/content/drive/MyDrive/pituitary_atlas/source_table/pituitary_atlas.xlsx',
+    atlas_path="/content/drive/MyDrive/pituitary_atlas/source_table/pituitary_atlas.xlsx",
     dataset_with_coords="/content/drive/MyDrive/pituitary_atlas/Unstructured/scanvi_all_cells_0828.h5ad",
     wt_dataset="/content/drive/MyDrive/pituitary_atlas/Unstructured/wt_adata_merged_post_scvi_0902.h5ad",
-    mut_dataset="/content/drive/MyDrive/pituitary_atlas/Unstructured/mut_adata_merged_post_scvi_0902.h5ad",
+    mut_dataset=None,  # optional: None or "" -> WT only
     output_total_counts_csv="/content/drive/MyDrive/pituitary_atlas/Unstructured/total_counts.csv",
     zip_output_path="/content/drive/MyDrive/pituitary_atlas/Unstructured/adata_export_large_umap_1015.zip",
+    batch_size=100,
+    max_workers=2,  # keep low in Colab to avoid OOM
+    atlas_meta_cols=("Comp_sex", "10X version", "Modality", "Normal"),  # taken from the atlas sheet if present
 ):
-    # Load and process data
+    # ---- Load ----
     adata = sc.read_h5ad(dataset_with_coords)
-    adata_wt = sc.read_h5ad(wt_dataset)
-    adata_mut = sc.read_h5ad(mut_dataset)
 
-    # 1. Create IDs
-    for d in [adata_wt, adata_mut, adata]:
-        d.obs["cell_id"] = d.obs["SRA_ID"].astype(str) + "_" + d.obs["0"].astype(str)
-    
-    # Handle NaNs for parse samples
-    nans = adata.obs["0"] == "nan"
-    adata.obs.loc[nans, "cell_id"] = adata.obs.loc[nans, "SRA_ID"].astype(str) + "_" + \
-                                     adata.obs.loc[nans, "bc"].astype(str) + "_" + \
-                                     adata.obs.loc[nans, "subpool"].astype(str)
+    paths = {k: p for k, p in {"wt": wt_dataset, "mut": mut_dataset}.items() if p}
+    if not paths:
+        raise ValueError("Provide at least one expression dataset (wt_dataset and/or mut_dataset).")
+    for k, p in paths.items():
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"{k} dataset not found: {p}")
+    expr_adatas = {k: sc.read_h5ad(p) for k, p in paths.items()}
+    for d in expr_adatas.values():
+        d.var_names_make_unique()  # duplicate gene names break concat
 
-    # 2. Merge data using the new concat method
-    merged_adata = sc.concat([adata_wt, adata_mut], label="batch")
-    merged_adata.obs_names_make_unique() # STOPS THE WARNING AND RAM SPIKES
-    merged_adata = merged_adata.copy()
+    # ---- 1. Cell IDs ----
+    for d in [adata, *expr_adatas.values()]:
+        _make_cell_ids(d)
 
-    # 3. Map UMAPs
-    mapping_umap1 = dict(zip(adata.obs["cell_id"], adata.obs["UMAP1"]))
-    mapping_umap2 = dict(zip(adata.obs["cell_id"], adata.obs["UMAP2"]))
-    merged_adata.obs["UMAP1"] = merged_adata.obs["cell_id"].map(mapping_umap1)
-    merged_adata.obs["UMAP2"] = merged_adata.obs["cell_id"].map(mapping_umap2)
+    # Parse samples: barcode column is "nan" -> use bc + subpool instead
+    if "0" in adata.obs.columns and {"bc", "subpool"}.issubset(adata.obs.columns):
+        nans = adata.obs["0"].astype(str) == "nan"
+        adata.obs.loc[nans, "cell_id"] = (
+            adata.obs.loc[nans, "SRA_ID"].astype(str) + "_"
+            + adata.obs.loc[nans, "bc"].astype(str) + "_"
+            + adata.obs.loc[nans, "subpool"].astype(str)
+        )
+
+    # ---- 2. Merge (or single dataset) ----
+    if len(expr_adatas) == 1:
+        (label, merged_adata), = expr_adatas.items()
+        merged_adata.obs["batch"] = label
+    else:
+        merged_adata = sc.concat(list(expr_adatas.values()), label="batch", keys=list(expr_adatas.keys()), index_unique="-")
+    merged_adata.obs_names_make_unique()
+    merged_adata.var_names_make_unique()
+    del expr_adatas
+    gc.collect()
+
+    # ---- 3. Map UMAP coords ----
+    if not {"UMAP1", "UMAP2"}.issubset(adata.obs.columns):
+        if "X_umap" not in adata.obsm:
+            raise KeyError("Reference has neither obs['UMAP1'/'UMAP2'] nor obsm['X_umap'].")
+        umap = np.asarray(adata.obsm["X_umap"])
+        adata.obs["UMAP1"] = umap[:, 0]
+        adata.obs["UMAP2"] = umap[:, 1]
+        print("Using UMAP coordinates from obsm['X_umap'].")
+    dup = adata.obs["cell_id"].duplicated(keep=False)
+    if dup.any():
+        print(f"WARNING: {dup.sum()} reference cells share a cell_id "
+              f"(e.g. {adata.obs.loc[dup, 'cell_id'].iloc[0]!r}); they are ambiguous and will not be matched.")
+    coords = adata.obs.loc[~dup].set_index("cell_id")[["UMAP1", "UMAP2"]]
+    del adata
+    gc.collect()
+    merged_adata.obs["UMAP1"] = merged_adata.obs["cell_id"].map(coords["UMAP1"])
+    merged_adata.obs["UMAP2"] = merged_adata.obs["cell_id"].map(coords["UMAP2"])
+    n_before = merged_adata.n_obs
     merged_adata = merged_adata[~merged_adata.obs["UMAP1"].isna()].copy()
+    print(f"Matched {merged_adata.n_obs}/{n_before} cells to UMAP coordinates.")
+    if merged_adata.n_obs == 0:
+        raise ValueError("No cells matched the UMAP file - check cell_id construction.")
 
-    # 4. Total Counts
-    merged_adata.obs["ncounts"] = merged_adata.X.sum(axis=1).A1
+    # ---- 4. Total counts ----
+    merged_adata.obs["ncounts"] = np.asarray(merged_adata.X.sum(axis=1)).ravel()
     merged_adata.obs["ncounts"].to_csv(output_total_counts_csv)
 
-    # 5. Metadata merge (your atlas logic)
-    pituitary_atlas = pd.read_excel(atlas_path).drop_duplicates(subset=["SRA_ID"])
-    pituitary_atlas = pituitary_atlas[["Comp_sex","10X version","Modality","Normal","SRA_ID"]]
-    
-    for col in ["Comp_sex","10X version","Modality","Normal","Sex"]:
-        if col in merged_adata.obs.columns:
-            merged_adata.obs.drop(col, axis=1, inplace=True)
-            
-    merged_adata.obs = merged_adata.obs.merge(pituitary_atlas, on="SRA_ID", how="left")
+    # ---- 5. Atlas metadata (keeps original cell names) ----
+    atlas = pd.read_excel(atlas_path).drop_duplicates(subset=["SRA_ID"])
+    meta_cols = [c for c in atlas_meta_cols if c in atlas.columns]
+    missing = [c for c in atlas_meta_cols if c not in atlas.columns]
+    if missing:
+        print(f"Atlas sheet has no {missing}; keeping any existing obs values for those.")
+    atlas = atlas[meta_cols + ["SRA_ID"]]
+    atlas["SRA_ID"] = atlas["SRA_ID"].astype(str)
 
-    # 6. Prepare for Export
-    if hasattr(merged_adata.X, 'format') and merged_adata.X.format != 'csc':
-        merged_adata.X = merged_adata.X.tocsc()
+    # Only drop obs columns that the atlas will replace (plus legacy 'Sex')
+    to_drop = [c for c in meta_cols + ["Sex"] if c in merged_adata.obs.columns]
+    obs = merged_adata.obs.drop(columns=to_drop)
+    obs["SRA_ID"] = obs["SRA_ID"].astype(str)
+    new_obs = obs.merge(atlas, on="SRA_ID", how="left")
+    new_obs.index = obs.index  # merge resets the index; restore cell names
+    merged_adata.obs = new_obs
 
-    obs_path = "obs.parquet"
+    # ---- 6. Prepare for export ----
+    if hasattr(merged_adata.X, "format") and merged_adata.X.format != "csc":
+        merged_adata.X = merged_adata.X.tocsc()  # fast column slicing
+
+    obs_path, umap_path, gene_dir = "obs.parquet", "umap.parquet", "genes_parquet"
     merged_adata.obs.to_parquet(obs_path, compression="gzip")
-    merged_adata.obs[["UMAP1", "UMAP2"]].to_parquet("umap.parquet", compression="gzip")
+    merged_adata.obs[["UMAP1", "UMAP2"]].to_parquet(umap_path, compression="gzip")
 
-    # 7. PARALLEL GENE EXPORT
-    os.makedirs("genes_parquet", exist_ok=True)
-    
-    # We pass the sparse matrix and names ONLY. 
-    # This uses a fraction of the RAM compared to passing the whole adata object.
-    sparse_X = merged_adata.X
+    # ---- 7. Parallel gene export ----
+    os.makedirs(gene_dir, exist_ok=True)
+    X = merged_adata.X
     obs_names = merged_adata.obs_names
-    var_names = merged_adata.var_names
-    
-    gene_names = var_names.to_list()
-    BATCH_SIZE = 100
-    gene_batches = [gene_names[i:i + BATCH_SIZE] for i in range(0, len(gene_names), BATCH_SIZE)]
+    gene_names = merged_adata.var_names.to_list()
+    n_genes = len(gene_names)
 
-    # Limit workers in Colab to prevent OOM
-    MAX_WORKERS = 2 
+    print(f"Starting parallel export of {n_genes} genes...")
+    gene_files = []
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                save_gene_batch_parquet,
+                gene_names[i:i + batch_size],
+                X[:, i:i + batch_size],  # only this batch's columns are sent
+                obs_names,
+                gene_dir,
+            )
+            for i in range(0, n_genes, batch_size)
+        ]
+        for f in futures:
+            gene_files.extend(f.result())
 
-    print(f"Starting parallel export of {len(gene_names)} genes...")
-    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # We use a list comprehension to pass the specific objects to each task
-        futures = [executor.submit(save_gene_batch_parquet, batch, sparse_X, obs_names, var_names) 
-                   for batch in gene_batches]
-        all_file_paths_lists = [f.result() for f in futures]
-
-    gene_files = [path for sublist in all_file_paths_lists for path in sublist]
-
-    # 8. Zip and Cleanup
+    # ---- 8. Zip + cleanup ----
     with zipfile.ZipFile(zip_output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(obs_path)
-        zf.write("umap.parquet")
-        for file_path in gene_files:
-            zf.write(file_path)
+        zf.write(umap_path)
+        for fp in gene_files:
+            zf.write(fp)
 
-    # Cleanup temp files
     os.remove(obs_path)
-    os.remove("umap.parquet")
-    for f_path in gene_files:
-        os.remove(f_path)
-    os.rmdir("genes_parquet")
+    os.remove(umap_path)
+    for fp in gene_files:
+        os.remove(fp)
+    os.rmdir(gene_dir)
 
     print(f"Success! Saved to {zip_output_path}")
+    return merged_adata
+
 
 
 
@@ -1107,6 +1207,37 @@ def processing_atac_samples(atac_all_cells,
 ##############
 #### Pseudobulking RNA
 ##############
+##############
+#### Pseudobulking RNA
+##############
+
+def _safe_int(x, default=None):
+  """int() that tolerates NaN / blanks / strings like '1.0'."""
+  try:
+    v = pd.to_numeric(x, errors='coerce')
+    return default if pd.isna(v) else int(v)
+  except Exception:
+    return default
+
+
+def _read_first_nonempty_h5ad(nac_path, ID, suffixes):
+  """Try each suffix in order; return the first readable AnnData with >0 cells, else None."""
+  for p in suffixes:
+    if not p:
+      continue
+    path = f"{nac_path}{ID}{p}"
+    if not os.path.isfile(path):
+      continue
+    try:
+      ad = sc.read_h5ad(path)
+    except Exception as e:
+      print(f"Could not read {path}: {type(e).__name__} - {e}")
+      continue
+    if ad.n_obs > 0:
+      return ad
+    print(f"{path} has 0 cells, trying next")
+  return None
+
 
 def generate_pseudobulks(atlas_source_path = '/content/drive/MyDrive/pituitary_atlas/source_table/pituitary_atlas.xlsx',
                          modality = ['sc','sn','multi_rna'],
@@ -1118,114 +1249,149 @@ def generate_pseudobulks(atlas_source_path = '/content/drive/MyDrive/pituitary_a
                          remaining_path="/analysis/adata_new_assigned_0828.h5ad",
                          remaining_path_backup="/analysis/adata_assigned.h5ad",
                          sample_col='sample',
-                          groups_col='new_cell_type',
-                          min_cells=50,
-                          pdata_output_path_suffix="/analysis/pdata_assigned_0828.h5ad",
-                          include_new_samples = False
-
+                         groups_col='new_cell_type',
+                         groups_col_backups=('assignments', 'cell_type'),
+                         min_cells=50,
+                         pdata_output_path_suffix="/analysis/pdata_assigned_0828.h5ad",
+                         include_new_samples = False,
+                         plot_hist = True
                          ):
 
+  if filtering_based_on_barcodes and scvi_labels_to_keep is None:
+    raise ValueError("filtering_based_on_barcodes=True needs scvi_labels_to_keep (a DataFrame with 'SRA_ID' and 'barcode').")
+
   df = pd.read_excel(atlas_source_path)
-  #modality
-  df = df[df['Modality'].isin(modality)]
-  #reset
-  df.reset_index(drop=True, inplace=True)
+  df = df[df['Modality'].isin(modality)].reset_index(drop=True)
 
   missing = []
 
   for i in range(len(df)-1,-1,-1):
-    SRA_ID = df.iloc[i]['SRA_ID']
-    GEO = df.iloc[i]['GEO']
-    ID = df.iloc[i][ID_col]
-    core_value = df[df[ID_col]==ID]["Core"].values[0]
-    core_action = False
-    if include_new_samples and core_value == 2:
-      core_action = True
+    row = df.iloc[i]
+    ID = row[ID_col]
+    if pd.isna(ID):
+      continue
+    ID = str(ID)
+    SRA_ID = str(row['SRA_ID'])
+    GEO = str(row['GEO'])
+    author = row['Author']
+    normal = _safe_int(row['Normal'])
+    n_cells = pd.to_numeric(row['n_cells'], errors='coerce')
+    core_value = _safe_int(row['Core'], default=-1)
+    is_core = core_value in (0, 1)
+    core_action = include_new_samples and not is_core  # True -> keep all cells, skip barcode filter
 
     print(ID)
-
-    author = df.iloc[i]['Author']
-    normal = df.iloc[i]['Normal']
 
     #if normal == 2 then skip
     if normal == 2:
       continue
-    #if ["n_cells"]<300 skip
-    n_cells = df.iloc[i]['n_cells']
-    if n_cells < min_cells_threshold:
+    #if n_cells < threshold skip (unknown n_cells is attempted)
+    if pd.notna(n_cells) and n_cells < min_cells_threshold:
       continue
-    
-    #if f"{nac_path}{ID}{pdata_output_path_suffix}" exists
-    if os.path.exists(f"{nac_path}{ID}{pdata_output_path_suffix}"):
+
+    #skip if pdata already exists
+    out_path = f"{nac_path}{ID}{pdata_output_path_suffix}"
+    if os.path.isfile(out_path):
       print(f"Skipping {ID} as pdata already exists")
       continue
 
-     #read adata assigned
+    #skip non-core samples unless asked to include them
+    if not include_new_samples and not is_core:
+      print(f"Skipping non-core sample {ID}")
+      continue
+
     try:
-      print(f"Processing {ID}...")
-      try:
-        adata_assigned = sc.read(f"{nac_path}{ID}{remaining_path}")
-      except:
-        print("Falling back to adata_assigned")
-        adata_assigned = sc.read(f"{nac_path}{ID}{remaining_path_backup}")
-    except:
-       print(f" Missing entry for {ID}")
-       missing.append(ID)
-       continue
-    
-    adata_assigned.obs["sample"] = ID
-    cell_counts = adata_assigned.X.sum(axis=1)
+      #read adata assigned (primary path, then backup; skip missing, unreadable or empty files)
+      adata_assigned = _read_first_nonempty_h5ad(nac_path, ID, (remaining_path, remaining_path_backup))
+      if adata_assigned is None:
+        print(f" Missing/empty entry for {ID}")
+        missing.append(ID)
+        continue
 
-    import matplotlib.pyplot as plt
-    plt.hist(cell_counts,color='red')
-    plt.show()
+      if plot_hist:
+        cell_counts = np.asarray(adata_assigned.X.sum(axis=1)).ravel()
+        plt.hist(cell_counts, color='red')
+        plt.title(ID)
+        plt.show()
 
-    if filtering_based_on_barcodes and core_action==False:
+      if filtering_based_on_barcodes and not core_action:
+        obs = adata_assigned.obs
+        cell_ids = obs['0'].astype(str) if '0' in obs.columns else (obs[0].astype(str) if 0 in obs.columns else pd.Series(adata_assigned.obs_names.astype(str), index=obs.index))
 
-      if author == "Rebboah et al. (2025)":
+        if author == "Rebboah et al. (2025)":
+          obs["barcode"] = GEO + ":" + obs["bc"].astype(str) + "_" + obs["subpool"].astype(str) + "-1"
+        elif author == "Sochodolsky et al. (2026)":
+          obs["barcode"] = SRA_ID + ":" + cell_ids + "-1"
+        else:
+          obs["barcode"] = GEO + ":" + cell_ids + "-1"
 
-        adata_assigned.obs["barcode"] = [GEO + ":" + adata_assigned.obs["bc"][i] + "_" + adata_assigned.obs["subpool"][i] + "-1"  for i in range(len(adata_assigned.obs))]
-        shape1 = adata_assigned.shape
-        adata_assigned = adata_assigned[adata_assigned.obs["barcode"].isin(scvi_labels_to_keep[scvi_labels_to_keep["SRA_ID"]==SRA_ID]["barcode"].values)]
-        shape2 = adata_assigned.shape
-        print(f"Removed {shape1[0]-shape2[0]} cells")
+        keep = scvi_labels_to_keep.loc[scvi_labels_to_keep["SRA_ID"].astype(str) == SRA_ID, "barcode"].values
+        n_before = adata_assigned.n_obs
+        adata_assigned = adata_assigned[adata_assigned.obs["barcode"].isin(keep)].copy()
+        print(f"Removed {n_before - adata_assigned.n_obs} cells")
 
+        if adata_assigned.n_obs == 0:
+          print(f"No cells left after barcode filtering for {ID}")
+          missing.append(ID)
+          continue
 
-      else:
-        adata_assigned.obs["barcode"] = [GEO+":" + adata_assigned.obs['0'][i] + "-1" for i in range(len(adata_assigned.obs))]
-        shape1 = adata_assigned.shape
-        adata_assigned = adata_assigned[adata_assigned.obs["barcode"].isin(scvi_labels_to_keep[scvi_labels_to_keep["SRA_ID"]==SRA_ID]["barcode"].values)]
-        shape2 = adata_assigned.shape
-        print(f"Removed {shape1[0]-shape2[0]} cells")
+      # 1. Pick the cell type column (fall back if groups_col is missing)
+      ct_col = next((c for c in (groups_col, *groups_col_backups) if c in adata_assigned.obs.columns), None)
+      if ct_col is None:
+        print(f"No cell type column ({groups_col} or {groups_col_backups}) for {ID}")
+        missing.append(ID)
+        continue
+      if ct_col != groups_col:
+        print(f"Using '{ct_col}' as cell type column for {ID}")
+      cell_types = adata_assigned.obs[ct_col].astype(str)
 
-    #if sample_col not in obs add it 
-    if sample_col not in adata_assigned.obs.columns:
-      adata_assigned.obs[sample_col] = ID
+      # 2. Restrict obs ONLY to the grouping columns to avoid metadata conflicts inside decoupler
+      adata_assigned.obs = pd.DataFrame({sample_col: ID, groups_col: cell_types.values},
+                                        index=adata_assigned.obs_names)
 
-    
-    pdata_assigned = dc.get_pseudobulk(
-        adata_assigned,
-        sample_col=sample_col,
-        groups_col=groups_col,
-        mode='sum',
-        min_cells=50,
-        min_counts=0
-    )
+      # 3. Make observation/var index unique to prevent broadcasting crashes
+      adata_assigned.obs_names_make_unique()
+      adata_assigned.var_names_make_unique()
 
-    pdata_assigned.obs.columns = pdata_assigned.obs.columns.astype(str)
-    pdata_assigned.var.columns = pdata_assigned.var.columns.astype(str)
+      # 4. Pseudobulk
+      pdata_assigned = dc.pp.pseudobulk(
+          adata_assigned,
+          sample_col=sample_col,
+          groups_col=groups_col,
+          mode='sum'
+      )
 
-    for col in pdata_assigned.obs.columns:
-      pdata_assigned.obs[col] = pdata_assigned.obs[col].astype(str)
-    pdata_assigned.write(f"{nac_path}{ID}{pdata_output_path_suffix}")
-    print(f"ALL DONE for {ID}")
-  
-    
-  print("Missing assignments files for the following SRA_IDs:")
+      # 5. Drop groups with too few cells (column name differs between decoupler versions)
+      n_cells_col = "psbulk_cells" if "psbulk_cells" in pdata_assigned.obs.columns else "psbulk_n_cells"
+      pdata_assigned = pdata_assigned[pd.to_numeric(pdata_assigned.obs[n_cells_col], errors='coerce') >= min_cells].copy()
+      # store under both names so downstream code works with either decoupler version
+      pdata_assigned.obs["psbulk_n_cells"] = pdata_assigned.obs[n_cells_col]
+
+      if pdata_assigned.n_obs == 0:
+        print(f"No cell types with >= {min_cells} cells for {ID}")
+        missing.append(ID)
+        continue
+
+      # 6. Make obs/var writeable and save
+      pdata_assigned.obs.columns = pdata_assigned.obs.columns.astype(str)
+      pdata_assigned.var.columns = pdata_assigned.var.columns.astype(str)
+      for col in pdata_assigned.obs.columns:
+        pdata_assigned.obs[col] = pdata_assigned.obs[col].astype(str)
+
+      os.makedirs(os.path.dirname(out_path), exist_ok=True)
+      pdata_assigned.write(out_path)
+      print(f"ALL DONE for {ID}")
+
+    except Exception as e:
+      import traceback
+      print(f"Error processing {ID}: {type(e).__name__} - {e}")
+      traceback.print_exc()
+      missing.append(ID)
+      continue
+
+  print("Missing/skipped samples (no file, empty, no cell type column, too few cells, or error):")
   print(missing)
-
-
-
+  return missing
 
 
 def read_merge_save_pbulk(
@@ -1236,77 +1402,143 @@ def read_merge_save_pbulk(
       nac_path="/content/drive/MyDrive/pituitary_atlas/processed/nac/",
       remaining_path="/analysis/pdata_assigned_0828.h5ad",
       cell_type_col='new_cell_type',
-      backup_cell_type_col='assignments'
+      backup_cell_type_col='assignments',
+      ID_col='SRA_ID',
+      sample_col='sample'
       ):
-  
+
+  # whole-sample pseudobulks have no cell type: pass cell_type_col=None
+  # (cell_type_col equal to ID_col or sample_col is treated the same way)
+  if cell_type_col in (None, "", ID_col, sample_col):
+    cell_type_col = None
+  if backup_cell_type_col in (None, "", ID_col, sample_col):
+    backup_cell_type_col = None
+  ct_cols = [cell_type_col] if cell_type_col else []
+
   df = pd.read_excel(atlas_source_path)
-  #in df keep only sc sn or multi_rna
-  df = df[df['Modality'].isin(Modality)]
-  #reset
-  df.reset_index(drop=True, inplace=True)
+  df = df[df['Modality'].isin(Modality)].reset_index(drop=True)
+  df[ID_col] = df[ID_col].astype(str)
 
-  pdatas= []
+  pdatas = []
+  failed = []
   for i in range(len(df)):
-    normal = df.iloc[i]['Normal']
+    row = df.iloc[i]
     #if normal == 2 then skip
-    if normal == 2:
+    if _safe_int(row['Normal']) == 2:
       continue
-    #if ["n_cells"]<300 skip
-    n_cells = df.iloc[i]['n_cells']
-    if n_cells < total_n_cells_threshold:
+    n_cells = pd.to_numeric(row['n_cells'], errors='coerce')
+    if pd.notna(n_cells) and n_cells < total_n_cells_threshold:
       continue
-    SRA_ID = df.iloc[i]['SRA_ID']
-    print(SRA_ID)
+    ID = row[ID_col]
+    print(ID)
 
+    path = f"{nac_path}{ID}{remaining_path}"
+    if not os.path.isfile(path):
+      print(f"No pdata for {ID}")
+      failed.append(ID)
+      continue
     try:
-      pdata_assigned = sc.read(f"{nac_path}{SRA_ID}{remaining_path}")
-      pdatas.append(pdata_assigned)
-    except:
-      print(f"Error reading {SRA_ID}")
+      p = sc.read_h5ad(path)
+    except Exception as e:
+      print(f"Error reading {ID}: {type(e).__name__} - {e}")
+      failed.append(ID)
+      continue
+    if p.n_obs == 0:
+      print(f"Empty pdata for {ID}")
+      failed.append(ID)
       continue
 
-  print(len(pdatas))
+    obs = p.obs
+    # harmonise cell count column across decoupler versions
+    if "psbulk_n_cells" not in obs.columns:
+      if "psbulk_cells" in obs.columns:
+        obs["psbulk_n_cells"] = obs["psbulk_cells"]
+      else:
+        obs["psbulk_n_cells"] = np.nan
+    # harmonise cell type column
+    if cell_type_col and cell_type_col not in obs.columns:
+      if backup_cell_type_col and backup_cell_type_col in obs.columns:
+        obs[cell_type_col] = obs[backup_cell_type_col]
+      else:
+        print(f"No {cell_type_col}/{backup_cell_type_col} column in pdata for {ID}")
+        failed.append(ID)
+        continue
+    # harmonise sample column
+    if sample_col not in obs.columns:
+      obs[sample_col] = ID
+    obs[ID_col] = ID
 
-  pdatas_merged = anndata.concat(pdatas, join='outer')
-  #change nans to 0 in pdatas
-  pdatas_merged.X[np.isnan(pdatas_merged.X)] = 0
+    p.obs = obs[list(dict.fromkeys([sample_col, *ct_cols, "psbulk_n_cells", ID_col]))].copy()
+    p.var_names_make_unique()
+    pdatas.append(p)
 
-  #turn ["psbulk_n_cells"] to ints
-  pdatas_merged.obs["psbulk_n_cells"] = pdatas_merged.obs["psbulk_n_cells"].astype(float)
-  pdatas_merged.obs["psbulk_n_cells"].sum()
+  print(f"Loaded {len(pdatas)} pdatas")
+  if not pdatas:
+    raise ValueError("No pseudobulk files could be loaded - check nac_path / remaining_path.")
 
-  # 1. Fill 'new_cell_type' where it equals the string "nan"
-  #if there is backup_cell_type_col use that to fill in
-  if backup_cell_type_col not in pdatas_merged.obs.columns:
-    pdatas_merged.obs[backup_cell_type_col] = pdatas_merged.obs[cell_type_col]
-  mask_cell_type = pdatas_merged.obs[cell_type_col].isna()
-  pdatas_merged.obs.loc[mask_cell_type, cell_type_col] = \
-      pdatas_merged.obs.loc[mask_cell_type, backup_cell_type_col]
+  pdatas_merged = anndata.concat(pdatas, join='outer', fill_value=0)
+  pdatas_merged.obs_names_make_unique()
 
-  # 2. Fill 'sample' where it equals the string "nan"
-  mask_sample = pdatas_merged.obs["sample"].isna()
-  pdatas_merged.obs.loc[mask_sample, "sample"] = \
-      pdatas_merged.obs.loc[mask_sample, "SRA_ID"]
+  # change nans to 0 in X (dense or sparse)
+  X = pdatas_merged.X
+  if sp.issparse(X):
+    X.data[np.isnan(X.data)] = 0
+  else:
+    pdatas_merged.X = np.nan_to_num(np.asarray(X, dtype=float), nan=0.0)
 
-  #add metadata from df
-  #only keep sample and new_cell_type
-  pdatas_merged.obs =pdatas_merged.obs[['sample',cell_type_col,"psbulk_n_cells"]]
-  #rename SRA_ID to sample
-  pdatas_merged.obs = pd.merge(pdatas_merged.obs, df, left_on='sample', right_on='SRA_ID')
+  pdatas_merged.obs["psbulk_n_cells"] = pd.to_numeric(pdatas_merged.obs["psbulk_n_cells"], errors='coerce')
+  print(f"Total cells pseudobulked: {pdatas_merged.obs['psbulk_n_cells'].sum():.0f}")
 
-  #from pdatas.obs remove columns that contain "Unnamed" or _index
-  pdatas_merged.obs = pdatas_merged.obs.loc[:, ~pdatas_merged.obs.columns.str.contains('Unnamed')]
-  pdatas_merged.obs = pdatas_merged.obs.loc[:, ~pdatas_merged.obs.columns.str.contains('_index')]
+  # fill missing / "nan" cell types and samples
+  obs = pdatas_merged.obs.copy()
+  for col in (sample_col, *ct_cols):
+    obs[col] = obs[col].astype(object)
+    bad = obs[col].isna() | obs[col].astype(str).isin(["nan", "None", ""])
+    if col == sample_col:
+      obs.loc[bad, col] = obs.loc[bad, ID_col]
+    elif bad.any():
+      print(f"WARNING: {bad.sum()} pseudobulks have no {cell_type_col}")
+    obs[col] = obs[col].astype(str)
+
+  # add metadata from the atlas sheet (keep cell names; one row per sample)
+  meta = df.drop_duplicates(subset=[ID_col])
+  meta = meta.drop(columns=[c for c in (sample_col, *ct_cols, "psbulk_n_cells") if c in meta.columns and c != ID_col])
+  new_obs = obs[[sample_col, *ct_cols, "psbulk_n_cells"]].merge(
+      meta, left_on=sample_col, right_on=ID_col, how='left')
+  new_obs.index = obs.index
+  pdatas_merged.obs = new_obs
+
+  cols_to_remove = ['published', 'species',
+       'Sample_wrong_sex', 'Sample_missing_sex', 'Sample_wrong_barcode_kit',
+       'Sample_switched_up', 'Sample_kept_for_analysis',
+       'Study_Seurat_version', 'Study_CR_version', 'Study_minimum_n',
+       'Study_minimum_group', 'pseudoaligned', 'passed_qc', 'filtering_junk',
+       'median_cellassign_prob', 'most_recent_workflow', 'n_cells',
+       'processed_atac', 'passed_qc_tcc', 'tcc_pseudobulked', 'Core',
+       'Notes 1', 'Notes 2']
+  pdatas_merged.obs = pdatas_merged.obs.drop(columns=cols_to_remove, errors='ignore')
+
+  # remove columns that contain "Unnamed" or _index
+  cols = pdatas_merged.obs.columns.astype(str)
+  pdatas_merged.obs = pdatas_merged.obs.loc[:, ~(cols.str.contains('Unnamed') | cols.str.contains('_index'))]
 
   pdatas_merged.obs.columns = pdatas_merged.obs.columns.astype(str)
   pdatas_merged.var.columns = pdatas_merged.var.columns.astype(str)
   pdatas_merged.var.index = pdatas_merged.var.index.astype(str)
-  pdatas_merged.obs.index= pdatas_merged.obs.index.astype(str)
+  pdatas_merged.obs.index = pdatas_merged.obs.index.astype(str)
 
-  # Convert all columns in obs to strings if needed
+  # object columns (mixed types / NaN) -> str so h5ad writing doesn't fail
   for col in pdatas_merged.obs.columns:
-      if pdatas_merged.obs[col].apply(type).nunique() > 1:
-          pdatas_merged.obs[col] = pdatas_merged.obs[col].astype(str)
+    if pdatas_merged.obs[col].dtype == object:
+      pdatas_merged.obs[col] = pdatas_merged.obs[col].astype(str)
+  for col in pdatas_merged.var.columns:
+    if pdatas_merged.var[col].dtype == object:
+      pdatas_merged.var[col] = pdatas_merged.var[col].astype(str)
 
-  # Now, try saving the AnnData object
-  pdatas_merged.write(f"{output_path}")
+  os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+  pdatas_merged.write(output_path)
+  print(f"Saved {pdatas_merged.shape} to {output_path}")
+  if failed:
+    print("Samples without a usable pdata file:")
+    print(failed)
+  return pdatas_merged

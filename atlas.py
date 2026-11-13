@@ -489,18 +489,17 @@ def violinplot(ax, adata, col, vals):
 
 def qc2(adata, species, experiment="sc"):
     if experiment == "sc":
-        if species == "mouse":
-            malat_tag = "Malat1"
-        elif species == "human":
-            malat_tag = "MALAT1"
+        malat_tag = {"mouse": "Malat1", "human": "MALAT1"}.get(species)
+        adata.var["malat"] = adata.var_names.str.startswith(malat_tag) if malat_tag else False
+        has_malat = bool(adata.var["malat"].any())
+        if not has_malat:
+            print("MALAT1 not found in var_names, skipping malat QC")
 
-        adata.var["malat"] = adata.var_names.str.startswith(malat_tag)
-
-        sc.pp.calculate_qc_metrics(adata, qc_vars=["malat"], inplace=True, percent_top=[20], log1p=True)
+        sc.pp.calculate_qc_metrics(adata, qc_vars=["malat"] if has_malat else [],
+                                   inplace=True, percent_top=[20], log1p=True)
 
         mt_val = mad_outlier(adata, 'pct_counts_mt', 5, upper_only=True, value=True)
         ribo_val = mad_outlier(adata, 'pct_counts_ribo', 5, upper_only=True, value=True)
-        malat_val = mad_outlier(adata, 'pct_counts_malat', 5, upper_only=True, value=True)
         log1p_n_genes_val = mad_outlier(adata, 'log1p_n_genes_by_counts', 4, upper_only=False, value=True)
         log1p_total_val = mad_outlier(adata, 'log1p_total_counts', 4, upper_only=False, value=True)
         top_genes_val = mad_outlier(adata, 'pct_counts_in_top_20_genes', 5, upper_only=True, value=True)
@@ -511,7 +510,11 @@ def qc2(adata, species, experiment="sc"):
 
         violinplot(axs[0], adata, 'pct_counts_mt', mt_val + [25])
         violinplot(axs[1], adata, 'pct_counts_ribo', ribo_val + [30])
-        violinplot(axs[2], adata, 'pct_counts_malat', malat_val)
+        if has_malat:
+            malat_val = mad_outlier(adata, 'pct_counts_malat', 5, upper_only=True, value=True)
+            violinplot(axs[2], adata, 'pct_counts_malat', malat_val)
+        else:
+            axs[2].axis('off')
         violinplot(axs[3], adata, 'log1p_n_genes_by_counts', log1p_n_genes_val)
         violinplot(axs[4], adata, 'log1p_total_counts', log1p_total_val)
         violinplot(axs[5], adata, 'pct_counts_in_top_20_genes', top_genes_val)
@@ -522,11 +525,12 @@ def qc2(adata, species, experiment="sc"):
         adata = adata[adata.obs.pct_counts_ribo < 30]
 
         bool_vector = mad_outlier(adata, 'log1p_total_counts', 4) + \
-                     mad_outlier(adata, 'log1p_n_genes_by_counts', 4) + \
-                     mad_outlier(adata, 'pct_counts_in_top_20_genes', 5, upper_only=True) + \
-                     mad_outlier(adata, 'pct_counts_mt', 5, upper_only=True) + \
-                     mad_outlier(adata, 'pct_counts_ribo', 5, upper_only=True) + \
-                     mad_outlier(adata, 'pct_counts_malat', 5, upper_only=True)
+                      mad_outlier(adata, 'log1p_n_genes_by_counts', 4) + \
+                      mad_outlier(adata, 'pct_counts_in_top_20_genes', 5, upper_only=True) + \
+                      mad_outlier(adata, 'pct_counts_mt', 5, upper_only=True) + \
+                      mad_outlier(adata, 'pct_counts_ribo', 5, upper_only=True)
+        if has_malat:
+            bool_vector = bool_vector + mad_outlier(adata, 'pct_counts_malat', 5, upper_only=True)
 
     else:
         mt_val = mad_outlier(adata, 'pct_counts_mt', 5, upper_only=True, value=True)
@@ -551,8 +555,8 @@ def qc2(adata, species, experiment="sc"):
         adata = adata[adata.obs.pct_counts_ribo < 10]
         adata = adata[adata.obs.pct_counts_mt < 5]
         bool_vector = mad_outlier(adata, 'log1p_total_counts', 4) + \
-                     mad_outlier(adata, 'log1p_n_genes_by_counts', 4) + \
-                     mad_outlier(adata, 'pct_counts_in_top_20_genes', 5)
+                      mad_outlier(adata, 'log1p_n_genes_by_counts', 4) + \
+                      mad_outlier(adata, 'pct_counts_in_top_20_genes', 5)
 
     adata = adata[~bool_vector]
     adata.uns['cells_removed'] = sum(bool_vector)

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import scipy.sparse as sp
 import joblib
 from pathlib import Path
@@ -11,7 +12,8 @@ def check_sample_compatibility_features(adata, feature_names, return_present=Tru
     varnames = adata.var_names
 
     #check percentage of features that are present in the adata object
-    present = np.isin(feature_names, varnames)
+    # hash-based lookup; np.isin on string arrays is very slow with ATAC-sized var_names
+    present = pd.Index(feature_names).isin(varnames)
     present_percentage = np.sum(present) / len(feature_names) * 100
     print(f"Percentage of features present in adata: {present_percentage:.2f}%")
     if return_present:
@@ -94,16 +96,18 @@ def pct_counts_kept(adata):
 
 
 def calc_pct_counts_kept(adata, features):
-    copied_adata = adata.copy()
-    features_in_data = [f for f in features if f in copied_adata.var_names]
-    copied_adata = copied_adata[:, features_in_data].copy()
-    #undo log1p
-    if sp.issparse(copied_adata.X):
-        copied_adata.X = copied_adata.X.expm1()
-    else:
-        copied_adata.X = np.expm1(copied_adata.X)
+    feature_indices = {name: i for i, name in enumerate(adata.var_names)}
+    source_indices = [feature_indices[f] for f in features if f in feature_indices]
 
-    adata.obs["pct_counts_kept"] = pct_counts_kept(copied_adata)
+    # Slice only the model features so adata.X is never copied in full
+    adata_X = adata.X
+    if sp.issparse(adata_X):
+        #undo log1p
+        kept_X = adata_X[:, source_indices].expm1()
+    else:
+        kept_X = np.expm1(np.ascontiguousarray(adata_X[:, source_indices]))
+
+    adata.obs["pct_counts_kept"] = np.asarray(kept_X.sum(axis=1) / 10000).flatten()
     return adata
 
 
